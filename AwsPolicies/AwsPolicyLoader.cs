@@ -1,0 +1,248 @@
+/*
+This file is part of aws-access-graph.
+
+aws-access-graph is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later version.
+
+aws-access-graph is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+details.
+
+You should have received a copy of the GNU Affero General Public License along with
+aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+using System.Text.Json;
+using Amazon.IdentityManagement;
+using Amazon.IdentityManagement.Model;
+using Amazon.SecurityToken;
+
+namespace AwsAccessGraph.AwsPolicies
+{
+    public static class AwsPolicyLoader
+    {
+        public static int CachedHours { get; set; } = int.MaxValue;
+
+        public static async Task<(
+            List<GroupDetail> groupList,
+            List<ManagedPolicyDetail> policyList,
+            List<RoleDetail> roleList,
+            List<UserDetail> userList,
+            List<SAMLProviderListEntry> awsSamlIdPs
+            )> LoadAwsPolicyAsync(
+                string? awsAccessKeyId,
+                string? awsSecretAccessKey,
+                string? awsSessionToken,
+                string? awsAccountId,
+                string outputDirectory,
+                bool forceRefresh,
+                bool noFiles,
+                CancellationToken cancellationToken)
+        {
+            var stsClient = new Lazy<AmazonSecurityTokenServiceClient>(() =>
+            {
+                Console.Error.Write("Getting STS client... ");
+                var sts = new AmazonSecurityTokenServiceClient(awsAccessKeyId, awsSecretAccessKey, awsSessionToken);
+                Console.Error.WriteLine("[\u2713]");
+
+                return sts;
+            });
+
+            if (string.IsNullOrWhiteSpace(awsAccountId))
+            {
+                var identity = await stsClient.Value.GetCallerIdentityAsync(new Amazon.SecurityToken.Model.GetCallerIdentityRequest(), cancellationToken);
+                awsAccountId = identity.Account;
+            }
+            Console.Error.WriteLine($"Analyzing AWS Account {awsAccountId}");
+
+            var iamClient = new Lazy<AmazonIdentityManagementServiceClient>(() =>
+            {
+                Console.Error.Write("Getting IAM client... ");
+                var iam = new Amazon.IdentityManagement.AmazonIdentityManagementServiceClient(
+                    awsAccessKeyId,
+                    awsSecretAccessKey,
+                    awsSessionToken);
+                Console.Error.WriteLine("[\u2713]");
+
+                return iam;
+            });
+
+            // ############################################
+            // ### Account Authorization Details Report ###
+            // ############################################
+            List<GroupDetail>? groupList = null;
+            List<ManagedPolicyDetail>? policyList = null;
+            List<RoleDetail>? roleList = null;
+            List<UserDetail>? userList = null;
+            List<SAMLProviderListEntry>? samlIdpList = null;
+            {
+                Console.Write("Enumerating Account Authorization Details... ");
+                var groupListPath = Path.Combine(outputDirectory, $"aws-{awsAccountId}-group-list.json");
+                var policyListPath = Path.Combine(outputDirectory, $"aws-{awsAccountId}-policy-list.json");
+                var roleListPath = Path.Combine(outputDirectory, $"aws-{awsAccountId}-role-list.json");
+                var userListPath = Path.Combine(outputDirectory, $"aws-{awsAccountId}-user-list.json");
+                var samlIdpListPath = Path.Combine(outputDirectory, $"aws-{awsAccountId}-saml-idp-list.json");
+
+                if (!forceRefresh
+                   && File.Exists(groupListPath)
+                   && (DateTime.UtcNow - File.GetLastWriteTimeUtc(groupListPath)).TotalHours < CachedHours)
+                {
+                    try
+                    {
+                        using (var fs = new FileStream(groupListPath, new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
+                        {
+                            groupList = await JsonSerializer.DeserializeAsync<List<GroupDetail>>(fs, cancellationToken: cancellationToken);
+                        }
+                        Console.Error.WriteLine($"[\u2713] {groupList!.Count} groups read from cache.");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"Error reading from AWS group cache{Environment.NewLine}Message:{ex.Message}{Environment.NewLine}, trying API... ");
+                        groupList = null;
+                    }
+                }
+
+                if (!forceRefresh
+                    && File.Exists(policyListPath)
+                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(policyListPath)).TotalHours < CachedHours)
+                {
+                    try
+                    {
+                        using (var fs = new FileStream(policyListPath, new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
+                        {
+                            policyList = await JsonSerializer.DeserializeAsync<List<ManagedPolicyDetail>>(fs, cancellationToken: cancellationToken);
+                        }
+                        Console.Error.WriteLine($"[\u2713] {policyList!.Count} policies read from cache.");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"Error reading from AWS policy cache{Environment.NewLine}Message:{ex.Message}{Environment.NewLine}, trying API... ");
+                        policyList = null;
+                    }
+                }
+
+                if (!forceRefresh
+                    && File.Exists(roleListPath)
+                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(roleListPath)).TotalHours < CachedHours)
+                {
+                    try
+                    {
+                        using (var fs = new FileStream(roleListPath, new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
+                        {
+                            roleList = await JsonSerializer.DeserializeAsync<List<RoleDetail>>(fs, cancellationToken: cancellationToken);
+                        }
+                        Console.Error.WriteLine($"[\u2713] {roleList!.Count} roles read from cache.");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"Error reading from AWS roles cache{Environment.NewLine}Message:{ex.Message}{Environment.NewLine}, trying API... ");
+                        roleList = null;
+                    }
+                }
+
+                if (!forceRefresh
+                    && File.Exists(userListPath)
+                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(userListPath)).TotalHours < CachedHours)
+                {
+                    try
+                    {
+                        using (var fs = new FileStream(userListPath, new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
+                        {
+                            userList = await JsonSerializer.DeserializeAsync<List<UserDetail>>(fs, cancellationToken: cancellationToken);
+                        }
+                        Console.Error.WriteLine($"[\u2713] {userList!.Count} users read from cache.");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"Error reading from AWS users cache{Environment.NewLine}Message:{ex.Message}{Environment.NewLine}, trying API... ");
+                        userList = null;
+                    }
+                }
+
+                if (groupList == null
+                    || policyList == null
+                    || roleList == null
+                    || userList == null)
+                {
+                    groupList ??= new List<GroupDetail>();
+                    policyList ??= new List<ManagedPolicyDetail>();
+                    roleList ??= new List<RoleDetail>();
+                    userList ??= new List<UserDetail>();
+                    var more = false;
+                    string? marker = null;
+                    do
+                    {
+                        var response = await iamClient.Value.GetAccountAuthorizationDetailsAsync(new GetAccountAuthorizationDetailsRequest
+                        {
+                            Marker = marker,
+                        }, cancellationToken);
+                        if (response == null)
+                            break;
+                        more = response.IsTruncated;
+                        marker = response.Marker;
+
+                        groupList.AddRange(response.GroupDetailList.Except(groupList));
+                        policyList.AddRange(response.Policies.Except(policyList));
+                        roleList.AddRange(response.RoleDetailList.Except(roleList));
+                        userList.AddRange(response.UserDetailList.Except(userList));
+
+                    } while (more && !cancellationToken.IsCancellationRequested);
+                    Console.Error.WriteLine($"[\u2713] {groupList.Count} groups, {policyList.Count} policies, {roleList.Count} roles, {userList.Count} users read from AWS API.");
+                    if (!noFiles
+                        && (groupList.Any() || policyList.Any() || roleList.Any() || userList.Any()))
+                    {
+                        if (!Directory.Exists(outputDirectory))
+                            Directory.CreateDirectory(outputDirectory);
+
+                        await File.WriteAllTextAsync(groupListPath, JsonSerializer.Serialize(groupList), cancellationToken);
+                        await File.WriteAllTextAsync(policyListPath, JsonSerializer.Serialize(policyList), cancellationToken);
+                        await File.WriteAllTextAsync(roleListPath, JsonSerializer.Serialize(roleList), cancellationToken);
+                        await File.WriteAllTextAsync(userListPath, JsonSerializer.Serialize(userList), cancellationToken);
+                    }
+                }
+
+                // SAML providers, separate call.
+                if (!forceRefresh
+                    && File.Exists(samlIdpListPath)
+                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(samlIdpListPath)).TotalHours < CachedHours)
+                {
+                    try
+                    {
+                        using (var fs = new FileStream(samlIdpListPath, new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
+                        {
+                            samlIdpList = await JsonSerializer.DeserializeAsync<List<SAMLProviderListEntry>>(fs, cancellationToken: cancellationToken);
+                        }
+                        Console.Error.WriteLine($"[\u2713] {samlIdpList!.Count} SAML providers read from cache.");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"Error reading from AWS SAML IdP cache{Environment.NewLine}Message:{ex.Message}{Environment.NewLine}, trying API... ");
+                        userList = null;
+                    }
+                }
+
+                if (samlIdpList == null)
+                {
+                    samlIdpList ??= new List<SAMLProviderListEntry>();
+                    var response = await iamClient.Value.ListSAMLProvidersAsync(new ListSAMLProvidersRequest(), cancellationToken);
+                    samlIdpList.AddRange(response.SAMLProviderList);
+
+                    Console.Error.WriteLine($"[\u2713] {samlIdpList.Count} SAML providers read from AWS API.");
+                    if (!noFiles && samlIdpList.Any())
+                    {
+                        if (!Directory.Exists(outputDirectory))
+                            Directory.CreateDirectory(outputDirectory);
+                        await File.WriteAllTextAsync(samlIdpListPath, JsonSerializer.Serialize(samlIdpList), cancellationToken);
+                    }
+                }
+
+                // However, we will prune our memory copy to only care about policies with attachments.
+                //policyList = policyList.Where(p => p.AttachmentCount > 0).ToList();
+            }
+
+            return (groupList!, policyList!, roleList!, userList!, samlIdpList!);
+        }
+    }
+}
