@@ -24,11 +24,11 @@ internal class Program
 {
     private static async Task<int> Main(string[] args)
     {
-        Console.Out.WriteLine("aws-access-graph  Copyright (C) 2003  Sean McElroy");
-        Console.Out.WriteLine("This program comes with ABSOLUTELY NO WARRANTY.");
-        Console.Out.WriteLine("This is free software, and you are welcome to redistribute it");
-        Console.Out.WriteLine("under certain conditions; see the LICENSE.txt file for details.");
-        Console.Out.WriteLine();
+        Console.Error.WriteLine("aws-access-graph  Copyright (C) 2023  Sean McElroy");
+        Console.Error.WriteLine("This program comes with ABSOLUTELY NO WARRANTY.");
+        Console.Error.WriteLine("This is free software, and you are welcome to redistribute it");
+        Console.Error.WriteLine("under certain conditions; see the LICENSE.txt file for details.");
+        Console.Error.WriteLine();
 
         return await Parser.Default.ParseArguments<CommandLineOptions>(args)
         .MapResult(async (CommandLineOptions opts) =>
