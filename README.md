@@ -54,7 +54,7 @@ contain contents similar to:
 Report of accesses to AWS Glue generated on 2023-02-26T00:29:38.0625650Z
 glue: ID:ksmith
 	path: ID:ksmith->OktaUser:ksmith@example.com->OktaGroup:aws_123456789012_DataAnalyst->AwsIamRole:DataAnalyst->AwsIamPolicy:DataAnalystAthenaGlueS3->glue
-	path: ID:ksmith->OktaUser:ksmith@example.com->OktaGroup:aws_123456789012_DataEngineer->AwsIamRole:DataEngineer->AwsIamPolicy:ProvectusEngineerConsoleIDP->glue
+	path: ID:ksmith->OktaUser:ksmith@example.com->OktaGroup:aws_123456789012_DataEngineer->AwsIamRole:DataEngineer->AwsIamPolicy:ExternalEngineerConsoleIDP->glue
 	path: ID:ksmith->OktaUser:ksmith@example.com->OktaGroup:aws_123456789012_DataAnalyst->AwsIamRole:DataAnalyst->AwsIamPolicy:DataAnalystConsoleIDP->glue
 	path: ID:ksmith->OktaUser:ksmith@example.com->OktaGroup:aws_123456789012_DataAnalyst->AwsIamRole:DataAnalyst->AwsIamPolicy:ReadOnlyAccess->glue
 	path: ID:ksmith->OktaUser:ksmith@example.com->OktaGroup:aws_123456789012_DataEngineer->AwsIamRole:DataEngineer->AwsIamPolicy:ReadOnlyAccess->glue
