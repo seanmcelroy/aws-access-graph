@@ -25,7 +25,7 @@ aws-access-graph glue --okta-base-url example.okta.com --okta-api-token "00IciYE
 
 The standard error (Terminal window output) would look similar to:
 ```
-aws-access-graph  Copyright (C) 2003  Sean McElroy
+aws-access-graph  Copyright (C) 2023  Sean McElroy
 This program comes with ABSOLUTELY NO WARRANTY.
 This is free software, and you are welcome to redistribute it
 under certain conditions; see the LICENSE.txt file for details.
