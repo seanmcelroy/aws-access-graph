@@ -41,9 +41,18 @@ namespace AwsAccessGraph.AwsPolicies
                 bool noFiles,
                 CancellationToken cancellationToken)
         {
-            var stsClient = new Lazy<AmazonSecurityTokenServiceClient>(() =>
+            var stsClientFactory = new Lazy<AmazonSecurityTokenServiceClient?>(() =>
             {
                 Console.Error.Write("Getting STS client... ");
+
+                if (string.IsNullOrWhiteSpace(awsAccessKeyId)
+                    || string.IsNullOrWhiteSpace(awsSecretAccessKey))
+                {
+                    Console.Error.WriteLine("[X]");
+                    Console.Error.WriteLine($"No AWS Access Key ID or AWS Secret Access Key was specified.  Aboring STS client creation.");
+                    return null;
+                }
+
                 var sts = new AmazonSecurityTokenServiceClient(awsAccessKeyId, awsSecretAccessKey, awsSessionToken);
                 Console.Error.WriteLine("[\u2713]");
 
@@ -52,7 +61,13 @@ namespace AwsAccessGraph.AwsPolicies
 
             if (string.IsNullOrWhiteSpace(awsAccountId))
             {
-                var identity = await stsClient.Value.GetCallerIdentityAsync(new Amazon.SecurityToken.Model.GetCallerIdentityRequest(), cancellationToken);
+                var stsClient = stsClientFactory.Value;
+                if (stsClient == null) {
+                    Console.Error.WriteLine($"Because no AWS Access Key ID or AWS Secret Access Key was specified and no AWS Account ID was provided, processing cannot continue.");
+                    System.Environment.Exit((int)Constants.ExitCodes.AwsAccountIdMissing);
+                    return default;
+                }
+                var identity = await stsClient.GetCallerIdentityAsync(new Amazon.SecurityToken.Model.GetCallerIdentityRequest(), cancellationToken);
                 awsAccountId = identity.Account;
             }
             Console.Error.WriteLine($"Analyzing AWS Account {awsAccountId}");

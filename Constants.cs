@@ -375,6 +375,7 @@ namespace AwsAccessGraph
             UnhandledError = -3,
             AwsIamException = -4,
             AwsCredentialsNotSpecified = -5,
+            AwsAccountIdMissing = -6,
         }
     }
 }

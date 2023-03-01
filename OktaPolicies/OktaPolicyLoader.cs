@@ -29,8 +29,8 @@ namespace AwsAccessGraph.OktaPolicies
             OktaUser[] userList,
             Dictionary<OktaGroupId, OktaGroupMember[]> awsGroupUsers
             )> LoadOktaPolicyAsync(
-                string oktaDomain,
-                string oktaApiToken,
+                string? oktaDomain,
+                string? oktaApiToken,
                 string outputDirectory,
                 bool forceRefresh,
                 bool noFiles,
@@ -39,9 +39,16 @@ namespace AwsAccessGraph.OktaPolicies
             // ###################
             // ### Okta Groups ###
             // ###################
-            var oktaGroupClient = new Lazy<GroupApi>(() =>
+            var oktaGroupClientFactory = new Lazy<GroupApi?>(() =>
                 {
                     Console.Write("Getting Okta group API client... ");
+
+                    if (string.IsNullOrWhiteSpace(oktaDomain))
+                    {
+                        Console.Error.WriteLine("[X]");
+                        Console.Error.WriteLine($"No Okta Base URL (domain) was specified.  Aboring Okta group API client creation.");
+                        return null;
+                    }
 
                     var config = new Configuration
                     {
@@ -77,7 +84,18 @@ namespace AwsAccessGraph.OktaPolicies
 
                 if (groupList == null)
                 {
-                    var rawGroupList = await oktaGroupClient.Value.ListGroups(cancellationToken: cancellationToken).ToArrayAsync(cancellationToken);
+                    var oktaGroupClient = oktaGroupClientFactory.Value;
+                    if (oktaGroupClient == null)
+                    {
+                        Console.Error.WriteLine($"Because no Okta Base URL (domain) was specified, processing will continue without Okta data.");
+                        return (
+                            Array.Empty<AwsAccessGraph.OktaPolicies.OktaGroup>(),
+                            Array.Empty<AwsAccessGraph.OktaPolicies.OktaUser>(),
+                            new Dictionary<string, AwsAccessGraph.OktaPolicies.OktaGroupMember[]>()
+                        );
+                    }
+
+                    var rawGroupList = await oktaGroupClient.ListGroups(cancellationToken: cancellationToken).ToArrayAsync(cancellationToken);
                     groupList = rawGroupList.Select(r => new OktaGroup(r)).ToArray();
                     Console.Error.WriteLine($"[\u2713] {groupList.Length} groups read from Okta API.");
                     if (!noFiles && groupList.Any())
@@ -174,7 +192,7 @@ namespace AwsAccessGraph.OktaPolicies
                         if (string.IsNullOrWhiteSpace(group.Id))
                             throw new InvalidOperationException($"Group ID is not set on: {group}");
 
-                        var groupUsers = await oktaGroupClient.Value.ListGroupUsers(group.Id, cancellationToken: cancellationToken).ToArrayAsync(cancellationToken);
+                        var groupUsers = await oktaGroupClientFactory.Value.ListGroupUsers(group.Id, cancellationToken: cancellationToken).ToArrayAsync(cancellationToken);
                         awsGroupUsers.Add(
                             group.Id,
                             groupUsers.Select(gu => new OktaGroupMember(group, gu)).ToArray());

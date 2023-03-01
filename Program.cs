@@ -52,7 +52,7 @@ internal class Program
                 var awsAccessKeyId = opts.AwsAccessKeyId ?? Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
                 var awsSecretAccessKey = opts.AwsSecretAccessKey ?? Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
                 var awsSessionToken = opts.AwsSessionToken ?? Environment.GetEnvironmentVariable("AWS_SESSION_TOKEN");
-                var awsAccountId = opts.AwsAccountId ?? Environment.GetEnvironmentVariable("AWS_ACCOUNT_ID");
+                var awsAccountIdArg = opts.AwsAccountId ?? Environment.GetEnvironmentVariable("AWS_ACCOUNT_ID");
 
                 if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
                     || string.IsNullOrWhiteSpace(awsSecretAccessKey))
@@ -62,52 +62,89 @@ internal class Program
                     return (int)ExitCodes.AwsCredentialsNotSpecified;
                 }
 
-                var (awsGroups, awsPolicies, awsRoles, awsUsers, awsSamlIdPs) = await AwsAccessGraph.AwsPolicies.AwsPolicyLoader.LoadAwsPolicyAsync(
-                    awsAccessKeyId: awsAccessKeyId,
-                    awsSecretAccessKey: awsSecretAccessKey,
-                    awsSessionToken: awsSessionToken,
-                    awsAccountId: awsAccountId,
-                    outputDirectory: dbPath,
-                    noFiles: opts.NoFiles,
-                    forceRefresh: opts.Refresh || opts.RefreshAws,
-                    cancellationToken: cts.Token);
+                string?[] awsAccountIds;
 
-                var oktaDomain = opts.OktaBaseUrl ?? Environment.GetEnvironmentVariable("OKTA_BASE_URL");
-                var oktaApiToken = opts.OktaApiToken ?? Environment.GetEnvironmentVariable("OKTA_API_TOKEN");
-                var (oktaGroups, oktaUsers, oktaGroupUsers) = (oktaDomain == null || oktaApiToken == null)
-                    ? (
-                        Array.Empty<AwsAccessGraph.OktaPolicies.OktaGroup>(),
-                        Array.Empty<AwsAccessGraph.OktaPolicies.OktaUser>(),
-                        new Dictionary<string, AwsAccessGraph.OktaPolicies.OktaGroupMember[]>()
-                    )
-                    : await AwsAccessGraph.OktaPolicies.OktaPolicyLoader.LoadOktaPolicyAsync(
-                        oktaDomain: oktaDomain,
-                        oktaApiToken: oktaApiToken,
+                if (string.IsNullOrWhiteSpace(awsAccountIdArg)
+                    && string.IsNullOrWhiteSpace(awsAccessKeyId)
+                    && string.IsNullOrWhiteSpace(awsSecretAccessKey))
+                {
+                    var files = Directory.GetFiles(dbPath, "aws-*-list.json", new EnumerationOptions { IgnoreInaccessible = true });
+                    if (files.Any())
+                    {
+                        awsAccountIds = files
+                            .Select(f => System.Text.RegularExpressions.Regex.Match(f, "aws-(?<aid>\\d{12})-").Groups["aid"].Value)
+                            .Distinct()
+                            .Where(a =>
+                                files.Any(f => f.IndexOf($"aws-{a}-group-list.json") > -1)
+                                && files.Any(f => f.IndexOf($"aws-{a}-policy-list.json") > -1)
+                                && files.Any(f => f.IndexOf($"aws-{a}-role-list.json") > -1)
+                                && files.Any(f => f.IndexOf($"aws-{a}-saml-idp-list.json") > -1)
+                                && files.Any(f => f.IndexOf($"aws-{a}-user-list.json") > -1)
+                            )
+                            .ToArray();
+
+                        Console.Error.WriteLine($"No AWS Account ID argument was specified, but {awsAccountIds.Length} were found with cached DbPath files, so using those.");
+                    }
+                    else
+                        awsAccountIds = Array.Empty<string>();
+                }
+                else
+                    awsAccountIds = new[] { awsAccountIdArg };
+
+                var allNodes = new List<Node>();
+                var allEdges = new List<Edge<Node, string>>();
+
+                foreach (var awsAccountId in awsAccountIds)
+                {
+                    Console.Error.WriteLine($"Processing AWS Account ID {awsAccountId}...");
+
+                    var (awsGroups, awsPolicies, awsRoles, awsUsers, awsSamlIdPs) = await AwsAccessGraph.AwsPolicies.AwsPolicyLoader.LoadAwsPolicyAsync(
+                        awsAccessKeyId: awsAccessKeyId,
+                        awsSecretAccessKey: awsSecretAccessKey,
+                        awsSessionToken: awsSessionToken,
+                        awsAccountId: awsAccountId,
                         outputDirectory: dbPath,
                         noFiles: opts.NoFiles,
-                        forceRefresh: opts.Refresh || opts.RefreshOkta,
+                        forceRefresh: opts.Refresh || opts.RefreshAws,
                         cancellationToken: cts.Token);
 
-                var (nodes, edges) = GraphBuilder.BuildAws(
-                    awsGroups,
-                    awsPolicies,
-                    awsRoles,
-                    awsUsers,
-                    awsSamlIdPs,
-                    oktaGroups,
-                    oktaUsers,
-                    oktaGroupUsers,
-                    opts.Verbose,
-                    opts.AwsServicePrefix,
-                    opts.NoPrune,
-                    noIdentities: opts.NoIdentities);
+                    var oktaDomain = opts.OktaBaseUrl ?? Environment.GetEnvironmentVariable("OKTA_BASE_URL");
+                    var oktaApiToken = opts.OktaApiToken ?? Environment.GetEnvironmentVariable("OKTA_API_TOKEN");
+                    var (oktaGroups, oktaUsers, oktaGroupUsers) =
+                        await AwsAccessGraph.OktaPolicies.OktaPolicyLoader.LoadOktaPolicyAsync(
+                            oktaDomain: oktaDomain,
+                            oktaApiToken: oktaApiToken,
+                            outputDirectory: dbPath,
+                            noFiles: opts.NoFiles,
+                            forceRefresh: opts.Refresh || opts.RefreshOkta,
+                            cancellationToken: cts.Token);
+
+                    var (nodes, edges) = GraphBuilder.BuildAws(
+                        awsGroups,
+                        awsPolicies,
+                        awsRoles,
+                        awsUsers,
+                        awsSamlIdPs,
+                        oktaGroups,
+                        oktaUsers,
+                        oktaGroupUsers,
+                        opts.Verbose,
+                        opts.AwsServicePrefix,
+                        opts.NoPrune,
+                        noIdentities: opts.NoIdentities);
+
+                    allNodes.AddRange(nodes);
+                    allEdges.AddRange(edges);
+
+                    Console.Error.WriteLine($"Processing complete for AWS Account ID {awsAccountId}");
+                }
 
                 // Write graph out to DGML file
                 if (opts.OutputDGML)
                 {
                     Console.Error.WriteLine("Writing directed graph markup language file... ");
                     var dgmlPath = Path.Combine(outputPath, "graph.dgml");
-                    DgmlSerializer.Write(dgmlPath, nodes, edges);
+                    DgmlSerializer.Write(dgmlPath, allNodes, allEdges);
                     Console.Error.WriteLine("Writing directed graph markup language file... [\u2713]");
                 }
 
@@ -118,8 +155,8 @@ internal class Program
                     var dotPath = Path.Combine(outputPath, "graph.dot");
                     await DotSerializer.WriteAsync(
                         dotPath,
-                        nodes,
-                        edges,
+                        allNodes,
+                        allEdges,
                         cts.Token);
                     Console.Error.WriteLine("Writing Graphviz DOT file... [\u2713]");
                 }
@@ -142,7 +179,7 @@ internal class Program
                     }
                 };
 
-                var targetService = nodes.FindServiceNode(opts.AwsServicePrefix.ToLowerInvariant());
+                var targetService = allNodes.FindServiceNode(opts.AwsServicePrefix.ToLowerInvariant());
                 {
                     var pathReport = Path.Combine(outputPath, "authorization-paths.txt");
                     using (var fs = opts.NoFiles ? null : new FileStream(pathReport, new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None, Options = FileOptions.Asynchronous }))
@@ -151,7 +188,7 @@ internal class Program
                         var writer = opts.NoFiles ? Console.Out : sw!;
 
                         await writer.WriteLineAsync($"Report of accesses to {Constants.AwsServicePolicyNames[opts.AwsServicePrefix]} generated on {DateTime.UtcNow.ToString("O")}");
-                        foreach (var u in edges
+                        foreach (var u in allEdges
                             .FindUsersAttachedTo(targetService)
                             .GroupBy(u => u.source)
                             .OrderBy(u => u.Key.Name))
@@ -165,6 +202,8 @@ internal class Program
                         }
                     }
                 }
+
+
 
                 Console.Out.WriteLine($"{Environment.NewLine}Done.");
                 return 0;
