@@ -25,6 +25,8 @@ namespace AwsAccessGraph.AwsPolicies
     {
         public static int CachedHours { get; set; } = int.MaxValue;
 
+        private static AmazonIdentityManagementServiceClient? iamClient = null;
+
         public static async Task<(
             List<GroupDetail> groupList,
             List<ManagedPolicyDetail> policyList,
@@ -62,7 +64,8 @@ namespace AwsAccessGraph.AwsPolicies
             if (string.IsNullOrWhiteSpace(awsAccountId))
             {
                 var stsClient = stsClientFactory.Value;
-                if (stsClient == null) {
+                if (stsClient == null)
+                {
                     Console.Error.WriteLine($"Because no AWS Access Key ID or AWS Secret Access Key was specified and no AWS Account ID was provided, processing cannot continue.");
                     System.Environment.Exit((int)Constants.ExitCodes.AwsAccountIdMissing);
                     return default;
@@ -72,7 +75,7 @@ namespace AwsAccessGraph.AwsPolicies
             }
             Console.Error.WriteLine($"Analyzing AWS Account {awsAccountId}");
 
-            var iamClient = new Lazy<AmazonIdentityManagementServiceClient>(() =>
+            var iamClientFactory = new Lazy<AmazonIdentityManagementServiceClient>(() =>
             {
                 Console.Error.Write("Getting IAM client... ");
                 var iam = new Amazon.IdentityManagement.AmazonIdentityManagementServiceClient(
@@ -187,9 +190,10 @@ namespace AwsAccessGraph.AwsPolicies
                     userList ??= new List<UserDetail>();
                     var more = false;
                     string? marker = null;
+                    iamClient = iamClient ?? iamClientFactory.Value;
                     do
                     {
-                        var response = await iamClient.Value.GetAccountAuthorizationDetailsAsync(new GetAccountAuthorizationDetailsRequest
+                        var response = await iamClient.GetAccountAuthorizationDetailsAsync(new GetAccountAuthorizationDetailsRequest
                         {
                             Marker = marker,
                         }, cancellationToken);
@@ -241,7 +245,8 @@ namespace AwsAccessGraph.AwsPolicies
                 if (samlIdpList == null)
                 {
                     samlIdpList ??= new List<SAMLProviderListEntry>();
-                    var response = await iamClient.Value.ListSAMLProvidersAsync(new ListSAMLProvidersRequest(), cancellationToken);
+                    iamClient = iamClient ?? iamClientFactory.Value;
+                    var response = await iamClient.ListSAMLProvidersAsync(new ListSAMLProvidersRequest(), cancellationToken);
                     samlIdpList.AddRange(response.SAMLProviderList);
 
                     Console.Error.WriteLine($"[\u2713] {samlIdpList.Count} SAML providers read from AWS API.");
@@ -258,6 +263,110 @@ namespace AwsAccessGraph.AwsPolicies
             }
 
             return (groupList!, policyList!, roleList!, userList!, samlIdpList!);
+        }
+
+        public static async Task<
+            Dictionary<string, EntityDetails[]>
+            > LoadAwsLastAccessedReportsAsync(
+                string? awsAccessKeyId,
+                string? awsSecretAccessKey,
+                string? awsSessionToken,
+                string? awsAccountId,
+                string outputDirectory,
+                bool forceRefresh,
+                bool noFiles,
+                List<RoleDetail> roleList,
+                Dictionary<string, Node[]> policyServices,
+                CancellationToken cancellationToken)
+        {
+            // #################################################
+            // ### GenerateServiceLastAccessedDetails Report ###
+            // #################################################
+            var iamClientFactory = new Lazy<AmazonIdentityManagementServiceClient>(() =>
+                        {
+                            Console.Error.Write("Getting IAM client... ");
+                            var iam = new Amazon.IdentityManagement.AmazonIdentityManagementServiceClient(
+                                awsAccessKeyId,
+                                awsSecretAccessKey,
+                                awsSessionToken);
+                            Console.Error.WriteLine("[\u2713]");
+
+                            return iam;
+                        });
+
+            Console.Write("Enumerating Service Last Action action details... ");
+
+            // Get this for each role.
+            var roleJobIds = new Queue<(string RoleId, string JobId)>(roleList.Count);
+            foreach (var role in roleList)
+            {
+                var roleActionDetailsPath = Path.Combine(outputDirectory, $"aws-{awsAccountId}-role-{role.RoleId}-service-last-action-report.json");
+                if (!forceRefresh
+                   && File.Exists(roleActionDetailsPath)
+                   && (DateTime.UtcNow - File.GetLastWriteTimeUtc(roleActionDetailsPath)).TotalHours < CachedHours)
+                {
+                    iamClient = iamClient ?? iamClientFactory.Value;
+                    do
+                    {
+                        var response = await iamClient.GenerateServiceLastAccessedDetailsAsync(new GenerateServiceLastAccessedDetailsRequest
+                        {
+                            Arn = role.Arn,
+                            Granularity = AccessAdvisorUsageGranularityType.ACTION_LEVEL
+                        }, cancellationToken);
+                        if (response == null || response.HttpStatusCode != System.Net.HttpStatusCode.OK)
+                            break;
+
+                        roleJobIds.Enqueue((role.RoleId, response.JobId));
+                    } while (!cancellationToken.IsCancellationRequested);
+                }
+            }
+
+            Dictionary<string, EntityDetails[]> roleEntityDetailList = new();
+
+            while (roleJobIds.Count > 0)
+            {
+                var nextRole = roleJobIds.Peek();
+                var roleActionDetailsPath = Path.Combine(outputDirectory, $"aws-{awsAccountId}-role-{nextRole.RoleId}-service-last-action-report.json");
+                var more = false;
+                string? marker = null;
+                iamClient = iamClient ?? iamClientFactory.Value;
+
+                var entitiesDetailsList = new List<EntityDetails>();
+                do
+                {
+                    var response = await iamClient.GetServiceLastAccessedDetailsWithEntitiesAsync(new GetServiceLastAccessedDetailsWithEntitiesRequest
+                    {
+                        JobId = nextRole.JobId,
+                        Marker = marker,
+                    }, cancellationToken);
+                    if (response == null)
+                        break;
+
+                    if (response.JobStatus == JobStatusType.FAILED)
+                    {
+                        Console.Error.WriteLine($"Error reading GetServiceLastAccessedDetailsWithEntitiesAsync for Job {nextRole.JobId} for role {nextRole.RoleId}: {response.Error}.");
+                        break;
+                    }
+                    if (response.JobStatus == JobStatusType.IN_PROGRESS)
+                    {
+                        Console.Error.WriteLine($"Still waiting on GetServiceLastAccessedDetailsWithEntitiesAsync for Job {nextRole.JobId} for role {nextRole.RoleId}: polling again in 10 seconds.");
+                        Thread.Sleep(10);
+                        continue;
+                    }
+
+                    // Job completed:
+                    more = response.IsTruncated;
+                    marker = response.Marker;
+
+                    entitiesDetailsList.AddRange(response.EntityDetailsList);
+
+                } while (more && !cancellationToken.IsCancellationRequested);
+
+                roleEntityDetailList.Add(nextRole.RoleId, entitiesDetailsList.ToArray());
+                roleJobIds.Dequeue();
+            }
+
+            return roleEntityDetailList;
         }
     }
 }

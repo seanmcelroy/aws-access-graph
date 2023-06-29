@@ -74,7 +74,7 @@ namespace AwsAccessGraph
             var edges = new List<Edge<Node, string>>();
 
             // Add AWS services to graph
-            foreach (var servicePrefix in policyAnalyses.SelectMany(s => s.Value.Stanzas.Select(t => t.Service)).Distinct())
+            foreach (var servicePrefix in policyAnalyses.SelectMany(s => s.Value.Stanzas.Select(t => t.Service.ToLowerInvariant())).Distinct())
             {
                 if (servicePrefix == null)
                     continue;

@@ -62,7 +62,7 @@ internal class Program
                     return (int)ExitCodes.AwsCredentialsNotSpecified;
                 }
 
-                string?[] awsAccountIds;
+                string[] awsAccountIds;
 
                 if (string.IsNullOrWhiteSpace(awsAccountIdArg)
                     && string.IsNullOrWhiteSpace(awsAccessKeyId)
@@ -89,10 +89,19 @@ internal class Program
                         awsAccountIds = Array.Empty<string>();
                 }
                 else
-                    awsAccountIds = new[] { awsAccountIdArg };
+                {
+                    if (string.IsNullOrWhiteSpace(awsAccountIdArg))
+                    {
+                        Console.Error.WriteLine("Error: An AWS Account ID cannot be inferred and was not specified as a command line argument.");
+                        return (int)ExitCodes.AwsAccountIdMissing;
+                    }
+
+                    awsAccountIds = new[] { awsAccountIdArg! };
+                }
 
                 var allNodes = new List<Node>();
                 var allEdges = new List<Edge<Node, string>>();
+                var accountRoleList = new Dictionary<string, List<Amazon.IdentityManagement.Model.RoleDetail>>();
 
                 foreach (var awsAccountId in awsAccountIds)
                 {
@@ -107,6 +116,8 @@ internal class Program
                         noFiles: opts.NoFiles,
                         forceRefresh: opts.Refresh || opts.RefreshAws,
                         cancellationToken: cts.Token);
+
+                    accountRoleList.Add(awsAccountId, awsRoles);
 
                     var oktaDomain = opts.OktaBaseUrl ?? Environment.GetEnvironmentVariable("OKTA_BASE_URL");
                     var oktaApiToken = opts.OktaApiToken ?? Environment.GetEnvironmentVariable("OKTA_API_TOKEN");
@@ -138,6 +149,48 @@ internal class Program
 
                     Console.Error.WriteLine($"Processing complete for AWS Account ID {awsAccountId}");
                 }
+
+                // Now get last-accessed data.
+                var policyServices = allNodes
+                    .Where(n => n.Type == NodeType.AwsInlinePolicy
+                        || n.Type == NodeType.AwsPolicy)
+                    .Distinct()
+                    .ToDictionary(
+                        k => k.Arn!,
+                        v => GraphSearcher.FindServicesAttachedTo(allEdges, v).Select(s => s.service).ToArray()
+                    );
+
+                foreach (var awsAccountId in awsAccountIds)
+                {
+                    await AwsAccessGraph.AwsPolicies.AwsPolicyLoader.LoadAwsLastAccessedReportsAsync(
+                        awsAccessKeyId: awsAccessKeyId,
+                        awsSecretAccessKey: awsSecretAccessKey,
+                        awsSessionToken: awsSessionToken,
+                        awsAccountId: awsAccountId,
+                        outputDirectory: dbPath,
+                        noFiles: opts.NoFiles,
+                        forceRefresh: opts.Refresh || opts.RefreshAws,
+                        roleList: accountRoleList[awsAccountId],
+                        policyServices: policyServices,
+                        cancellationToken: cts.Token);
+                }
+
+                // Dedupe nodes and repair edges.
+                var dedupedNodes = allNodes.Distinct().ToList();
+                Console.WriteLine($"Deduped {allNodes.Count} nodes into {dedupedNodes.Count()} nodes.");
+                var dedupedEdges = allEdges.Distinct()
+                    .Select(e => new Edge<Node, string>(
+                        dedupedNodes.Single(d => string.CompareOrdinal(e.Source.Name, d.Name) == 0
+                        && e.Source.Type == d.Type
+                        && string.CompareOrdinal(e.Source.Arn, d.Arn) == 0),
+                        dedupedNodes.Single(d => string.CompareOrdinal(e.Destination.Name, d.Name) == 0
+                        && e.Destination.Type == d.Type
+                        && string.CompareOrdinal(e.Destination.Arn, d.Arn) == 0),
+                        e.EdgeData)).ToList();
+                Console.WriteLine($"Deduped {allEdges.Count} edges into {dedupedEdges.Count()} edges.");
+
+                allNodes = dedupedNodes;
+                allEdges = dedupedEdges;
 
                 // Write graph out to DGML file
                 if (opts.OutputDGML)
