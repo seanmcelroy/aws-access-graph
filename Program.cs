@@ -234,7 +234,7 @@ internal class Program
 
                 var targetService = allNodes.FindServiceNode(opts.AwsServicePrefix.ToLowerInvariant());
                 {
-                    var pathReport = Path.Combine(outputPath, "authorization-paths.txt");
+                    var pathReport = Path.Combine(outputPath, $"authorization-paths-{targetService.Name}.txt");
                     using (var fs = opts.NoFiles ? null : new FileStream(pathReport, new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None, Options = FileOptions.Asynchronous }))
                     using (var sw = opts.NoFiles ? null : new StreamWriter(fs!))
                     {
