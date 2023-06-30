@@ -86,16 +86,22 @@ internal class Program
                         Console.Error.WriteLine($"No AWS Account ID argument was specified, but {awsAccountIds.Length} were found with cached DbPath files, so using those.");
                     }
                     else
+                    {
+                        Console.WriteLine($"WHAT1");
                         awsAccountIds = Array.Empty<string>();
+                    }
                 }
                 else
                 {
                     if (string.IsNullOrWhiteSpace(awsAccountIdArg))
                     {
                         Console.Error.WriteLine("Error: An AWS Account ID cannot be inferred and was not specified as a command line argument.");
+                        Console.WriteLine($"awsAccountIdArg:    {(string.IsNullOrWhiteSpace(awsAccountIdArg) ? "SPECIFIED" : "UNSPECIFIED")}");
+                        Console.WriteLine($"awsAccessKeyId:     {(string.IsNullOrWhiteSpace(awsAccessKeyId) ? "SPECIFIED" : "UNSPECIFIED")}");
+                        Console.WriteLine($"awsSecretAccessKey: {(string.IsNullOrWhiteSpace(awsSecretAccessKey) ? "SPECIFIED" : "UNSPECIFIED")}");
+                        Console.Error.WriteLine("Hint: Maybe you're running this inside of aws-mfa or have env variables set for an AWS profile and did not intend to?");
                         return (int)ExitCodes.AwsAccountIdMissing;
                     }
-
                     awsAccountIds = new[] { awsAccountIdArg! };
                 }
 
@@ -105,6 +111,9 @@ internal class Program
 
                 foreach (var awsAccountId in awsAccountIds)
                 {
+                    if (string.IsNullOrWhiteSpace(awsAccountId))
+                        Console.WriteLine($"WHAT3");
+
                     Console.Error.WriteLine($"Processing AWS Account ID {awsAccountId}...");
 
                     var (awsGroups, awsPolicies, awsRoles, awsUsers, awsSamlIdPs) = await AwsAccessGraph.AwsPolicies.AwsPolicyLoader.LoadAwsPolicyAsync(
