@@ -47,7 +47,16 @@ internal class Program
                 };
 
                 var dbPath = Path.Combine(Environment.CurrentDirectory, opts.DbPath);
+                if (!Directory.Exists(dbPath)) {
+                    Console.Error.WriteLine($"Cannot find db directory in working path. Creating: {dbPath}");
+                    Directory.CreateDirectory(dbPath);
+                }
+
                 var outputPath = Path.Combine(Environment.CurrentDirectory, opts.OutputPath);
+                if (!Directory.Exists(outputPath)) {
+                    Console.Error.WriteLine($"Cannot find output directory in working path. Creating: {outputPath}");
+                    Directory.CreateDirectory(outputPath);
+                }
 
                 var awsAccessKeyId = opts.AwsAccessKeyId ?? Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
                 var awsSecretAccessKey = opts.AwsSecretAccessKey ?? Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
@@ -87,7 +96,6 @@ internal class Program
                     }
                     else
                     {
-                        Console.WriteLine($"WHAT1");
                         awsAccountIds = Array.Empty<string>();
                     }
                 }
@@ -111,9 +119,6 @@ internal class Program
 
                 foreach (var awsAccountId in awsAccountIds)
                 {
-                    if (string.IsNullOrWhiteSpace(awsAccountId))
-                        Console.WriteLine($"WHAT3");
-
                     Console.Error.WriteLine($"Processing AWS Account ID {awsAccountId}...");
 
                     var (awsGroups, awsPolicies, awsRoles, awsUsers, awsSamlIdPs) = await AwsAccessGraph.AwsPolicies.AwsPolicyLoader.LoadAwsPolicyAsync(
@@ -186,7 +191,8 @@ internal class Program
 
                 // Dedupe nodes and repair edges.
                 var dedupedNodes = allNodes.Distinct().ToList();
-                Console.WriteLine($"Deduped {allNodes.Count} nodes into {dedupedNodes.Count()} nodes.");
+                if (allNodes.Count != dedupedNodes.Count)
+                Console.WriteLine($"Deduped {allNodes.Count} nodes into {dedupedNodes.Count} nodes.");
                 var dedupedEdges = allEdges.Distinct()
                     .Select(e => new Edge<Node, string>(
                         dedupedNodes.Single(d => string.CompareOrdinal(e.Source.Name, d.Name) == 0
@@ -196,7 +202,8 @@ internal class Program
                         && e.Destination.Type == d.Type
                         && string.CompareOrdinal(e.Destination.Arn, d.Arn) == 0),
                         e.EdgeData)).ToList();
-                Console.WriteLine($"Deduped {allEdges.Count} edges into {dedupedEdges.Count()} edges.");
+                if (allEdges.Count != dedupedEdges.Count)
+                Console.WriteLine($"Deduped {allEdges.Count} edges into {dedupedEdges.Count} edges.");
 
                 allNodes = dedupedNodes;
                 allEdges = dedupedEdges;
@@ -242,6 +249,11 @@ internal class Program
                 };
 
                 var targetService = allNodes.FindServiceNode(opts.AwsServicePrefix.ToLowerInvariant());
+                if (default(Node).Equals(targetService)) {
+                    Console.Error.WriteLine($"Unable to find any service node named '{opts.AwsServicePrefix.ToLowerInvariant()}'.  Perhaps you have no cached db files for the specified account/service?");
+                    return (int)ExitCodes.TargetServiceNotFound;
+                }
+                else
                 {
                     var pathReport = Path.Combine(outputPath, $"authorization-paths-{targetService.Name}.txt");
                     using (var fs = opts.NoFiles ? null : new FileStream(pathReport, new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None, Options = FileOptions.Asynchronous }))
@@ -264,8 +276,6 @@ internal class Program
                         }
                     }
                 }
-
-
 
                 Console.Out.WriteLine($"{Environment.NewLine}Done.");
                 return 0;

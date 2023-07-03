@@ -20,18 +20,20 @@ namespace AwsAccessGraph
     {
         public static Node FindServiceNode(this IEnumerable<Node> nodes, string serviceName)
         {
+            var matchingNodes = nodes.Where(n => string.Compare(n.Name, serviceName, StringComparison.OrdinalIgnoreCase) == 0
+                && n.Type.Equals(NodeType.AwsService));
+
+            if (!matchingNodes.Any())
+                return default(Node);
+
             Node result;
             try {
-                result = nodes.Single(n => string.Compare(n.Name, serviceName, StringComparison.OrdinalIgnoreCase) == 0
-                && n.Type.Equals(NodeType.AwsService));
+                result = matchingNodes.SingleOrDefault();
             }
             catch {
                 Console.Error.WriteLine($"More than one service node found for '{serviceName}', found {nodes.Count(n => string.Compare(n.Name, serviceName, StringComparison.OrdinalIgnoreCase) == 0 && n.Type.Equals(NodeType.AwsService))}");
                 throw;
             }
-
-            if (default(Node).Equals(result))
-                throw new InvalidOperationException();
 
             return result;
         }

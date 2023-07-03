@@ -376,6 +376,7 @@ namespace AwsAccessGraph
             AwsIamException = -4,
             AwsCredentialsNotSpecified = -5,
             AwsAccountIdMissing = -6,
+            TargetServiceNotFound = -7,
         }
     }
 }
