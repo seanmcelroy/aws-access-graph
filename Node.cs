@@ -20,7 +20,7 @@ namespace AwsAccessGraph
     {
         public string Name { get; init; }
         public NodeType Type { get; init; }
-        public string? Arn { get; init; }
+        public string Arn { get; init; }
 
         public int CompareTo(Node other)
         {

@@ -40,7 +40,8 @@ namespace AwsAccessGraph.DirectedGraphMarkupLanguage
                         Category = Enum.GetName<NodeType>(n.Type)!
                     };
                 }).ToList(),
-                Links = edges.Select(e => new DirectedGraphLink
+                Links = edges
+                .Select(e => new DirectedGraphLink
                 {
                     Source = e.Source.Arn,
                     Target = e.Destination.Arn,

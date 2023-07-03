@@ -33,6 +33,12 @@ internal class Program
         return await Parser.Default.ParseArguments<CommandLineOptions>(args)
         .MapResult(async (CommandLineOptions opts) =>
         {
+            if (args.Length == 0 || string.IsNullOrWhiteSpace(args.Aggregate((c, n) => $"{c}{n}")))
+            {
+                Console.Error.WriteLine("No arguments supplied.  Use the --help argument for help.");
+                return 0;
+            }
+
             if (!Constants.AwsServicePolicyNames.ContainsKey(opts.AwsServicePrefix.ToLowerInvariant()))
             {
                 return (int)ExitCodes.InvalidAwsServicePrefix;
@@ -47,13 +53,15 @@ internal class Program
                 };
 
                 var dbPath = Path.Combine(Environment.CurrentDirectory, opts.DbPath);
-                if (!Directory.Exists(dbPath)) {
+                if (!Directory.Exists(dbPath))
+                {
                     Console.Error.WriteLine($"Cannot find db directory in working path. Creating: {dbPath}");
                     Directory.CreateDirectory(dbPath);
                 }
 
                 var outputPath = Path.Combine(Environment.CurrentDirectory, opts.OutputPath);
-                if (!Directory.Exists(outputPath)) {
+                if (!Directory.Exists(outputPath))
+                {
                     Console.Error.WriteLine($"Cannot find output directory in working path. Creating: {outputPath}");
                     Directory.CreateDirectory(outputPath);
                 }
@@ -65,6 +73,7 @@ internal class Program
 
                 if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
                     || string.IsNullOrWhiteSpace(awsSecretAccessKey))
+                    && string.IsNullOrWhiteSpace(awsSessionToken)
                     && opts.NoFiles)
                 {
                     Console.Error.WriteLine("Error: no-files was specified, but AWS credentials were not provided.");
@@ -103,12 +112,20 @@ internal class Program
                 {
                     if (string.IsNullOrWhiteSpace(awsAccountIdArg))
                     {
-                        Console.Error.WriteLine("Error: An AWS Account ID cannot be inferred and was not specified as a command line argument.");
-                        Console.WriteLine($"awsAccountIdArg:    {(string.IsNullOrWhiteSpace(awsAccountIdArg) ? "SPECIFIED" : "UNSPECIFIED")}");
-                        Console.WriteLine($"awsAccessKeyId:     {(string.IsNullOrWhiteSpace(awsAccessKeyId) ? "SPECIFIED" : "UNSPECIFIED")}");
-                        Console.WriteLine($"awsSecretAccessKey: {(string.IsNullOrWhiteSpace(awsSecretAccessKey) ? "SPECIFIED" : "UNSPECIFIED")}");
-                        Console.Error.WriteLine("Hint: Maybe you're running this inside of aws-mfa or have env variables set for an AWS profile and did not intend to?");
-                        return (int)ExitCodes.AwsAccountIdMissing;
+                        if (!string.IsNullOrWhiteSpace(awsSessionToken))
+                        {
+                            // Infer from session token.
+                        }
+                        else
+                        {
+                            Console.Error.WriteLine("Error: An AWS Account ID cannot be inferred and was not specified as a command line argument.");
+                            Console.WriteLine($"awsAccountIdArg:    {(string.IsNullOrWhiteSpace(awsAccountIdArg) ? "SPECIFIED" : "UNSPECIFIED")}");
+                            Console.WriteLine($"awsAccessKeyId:     {(string.IsNullOrWhiteSpace(awsAccessKeyId) ? "SPECIFIED" : "UNSPECIFIED")}");
+                            Console.WriteLine($"awsSecretAccessKey: {(string.IsNullOrWhiteSpace(awsSecretAccessKey) ? "SPECIFIED" : "UNSPECIFIED")}");
+                            Console.WriteLine($"awsSessionToken:    {(string.IsNullOrWhiteSpace(awsSessionToken) ? "SPECIFIED" : "UNSPECIFIED")}");
+                            Console.Error.WriteLine("Hint: Maybe you're running this inside of aws-mfa or have env variables set for an AWS profile and did not intend to?");
+                            return (int)ExitCodes.AwsAccountIdMissing;
+                        }
                     }
                     awsAccountIds = new[] { awsAccountIdArg! };
                 }
@@ -117,11 +134,12 @@ internal class Program
                 var allEdges = new List<Edge<Node, string>>();
                 var accountRoleList = new Dictionary<string, List<Amazon.IdentityManagement.Model.RoleDetail>>();
 
+                var actualAwsAccountIds = new List<string>();
+
                 foreach (var awsAccountId in awsAccountIds)
                 {
                     Console.Error.WriteLine($"Processing AWS Account ID {awsAccountId}...");
-
-                    var (awsGroups, awsPolicies, awsRoles, awsUsers, awsSamlIdPs) = await AwsAccessGraph.AwsPolicies.AwsPolicyLoader.LoadAwsPolicyAsync(
+                    var (awsGroups, awsPolicies, awsRoles, awsUsers, awsSamlIdPs, actualAwsAccountId) = await AwsAccessGraph.AwsPolicies.AwsPolicyLoader.LoadAwsPolicyAsync(
                         awsAccessKeyId: awsAccessKeyId,
                         awsSecretAccessKey: awsSecretAccessKey,
                         awsSessionToken: awsSessionToken,
@@ -131,7 +149,7 @@ internal class Program
                         forceRefresh: opts.Refresh || opts.RefreshAws,
                         cancellationToken: cts.Token);
 
-                    accountRoleList.Add(awsAccountId, awsRoles);
+                    accountRoleList.Add(actualAwsAccountId, awsRoles);
 
                     var oktaDomain = opts.OktaBaseUrl ?? Environment.GetEnvironmentVariable("OKTA_BASE_URL");
                     var oktaApiToken = opts.OktaApiToken ?? Environment.GetEnvironmentVariable("OKTA_API_TOKEN");
@@ -161,7 +179,8 @@ internal class Program
                     allNodes.AddRange(nodes);
                     allEdges.AddRange(edges);
 
-                    Console.Error.WriteLine($"Processing complete for AWS Account ID {awsAccountId}");
+                    Console.Error.WriteLine($"Processing complete for AWS Account ID {actualAwsAccountId}");
+                    actualAwsAccountIds.Add(actualAwsAccountId);
                 }
 
                 // Now get last-accessed data.
@@ -174,7 +193,7 @@ internal class Program
                         v => GraphSearcher.FindServicesAttachedTo(allEdges, v).Select(s => s.service).ToArray()
                     );
 
-                foreach (var awsAccountId in awsAccountIds)
+                foreach (var awsAccountId in actualAwsAccountIds)
                 {
                     await AwsAccessGraph.AwsPolicies.AwsPolicyLoader.LoadAwsLastAccessedReportsAsync(
                         awsAccessKeyId: awsAccessKeyId,
@@ -192,7 +211,7 @@ internal class Program
                 // Dedupe nodes and repair edges.
                 var dedupedNodes = allNodes.Distinct().ToList();
                 if (allNodes.Count != dedupedNodes.Count)
-                Console.WriteLine($"Deduped {allNodes.Count} nodes into {dedupedNodes.Count} nodes.");
+                    Console.WriteLine($"Deduped {allNodes.Count} nodes into {dedupedNodes.Count} nodes.");
                 var dedupedEdges = allEdges.Distinct()
                     .Select(e => new Edge<Node, string>(
                         dedupedNodes.Single(d => string.CompareOrdinal(e.Source.Name, d.Name) == 0
@@ -203,7 +222,7 @@ internal class Program
                         && string.CompareOrdinal(e.Destination.Arn, d.Arn) == 0),
                         e.EdgeData)).ToList();
                 if (allEdges.Count != dedupedEdges.Count)
-                Console.WriteLine($"Deduped {allEdges.Count} edges into {dedupedEdges.Count} edges.");
+                    Console.WriteLine($"Deduped {allEdges.Count} edges into {dedupedEdges.Count} edges.");
 
                 allNodes = dedupedNodes;
                 allEdges = dedupedEdges;
@@ -249,7 +268,8 @@ internal class Program
                 };
 
                 var targetService = allNodes.FindServiceNode(opts.AwsServicePrefix.ToLowerInvariant());
-                if (default(Node).Equals(targetService)) {
+                if (default(Node).Equals(targetService))
+                {
                     Console.Error.WriteLine($"Unable to find any service node named '{opts.AwsServicePrefix.ToLowerInvariant()}'.  Perhaps you have no cached db files for the specified account/service?");
                     return (int)ExitCodes.TargetServiceNotFound;
                 }

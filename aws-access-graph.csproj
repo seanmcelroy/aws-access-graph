@@ -13,12 +13,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AWSSDK.IdentityManagement" Version="3.7.100.73" />
-    <PackageReference Include="AWSSDK.SecurityToken" Version="3.7.101.11" />
+    <PackageReference Include="AWSSDK.IdentityManagement" Version="3.7.102" />
+    <PackageReference Include="AWSSDK.SecurityToken" Version="3.7.103.16" />
     <PackageReference Include="CommandLineParser" Version="2.9.1" />
     <PackageReference Include="CsvHelper" Version="30.0.1" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="7.0.0" />
-    <PackageReference Include="Okta.Sdk" Version="6.0.3" />
+    <PackageReference Include="Okta.Sdk" Version="6.0.11" />
   </ItemGroup>
 
 </Project>

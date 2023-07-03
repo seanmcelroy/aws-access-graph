@@ -149,13 +149,20 @@ namespace AwsAccessGraph.OktaPolicies
                 if (userList == null)
                 {
                     var rawUserList = await oktaUserClient.Value.ListUsers(cancellationToken: cancellationToken).ToArrayAsync(cancellationToken);
-                    userList = rawUserList.Select(r => new OktaUser(r)).ToArray();
-                    Console.Error.WriteLine($"[\u2713] {userList.Length} users read from Okta API.");
-                    if (!noFiles && userList.Any())
+                    if (!rawUserList.Any())
                     {
-                        if (!Directory.Exists(outputDirectory))
-                            Directory.CreateDirectory(outputDirectory);
-                        await File.WriteAllTextAsync(userListPath, JsonSerializer.Serialize(userList), cancellationToken);
+                        Console.Error.WriteLine($"[X] No users read from Okta API.  This probably means your --okta-base-url or --okta-api-token are invalid");
+                    }
+                    else
+                    {
+                        userList = rawUserList.Select(r => new OktaUser(r)).ToArray();
+                        Console.Error.WriteLine($"[\u2713] {userList.Length} users read from Okta API.");
+                        if (!noFiles && userList.Any())
+                        {
+                            if (!Directory.Exists(outputDirectory))
+                                Directory.CreateDirectory(outputDirectory);
+                            await File.WriteAllTextAsync(userListPath, JsonSerializer.Serialize(userList), cancellationToken);
+                        }
                     }
                 }
             }
@@ -207,7 +214,7 @@ namespace AwsAccessGraph.OktaPolicies
                 }
             }
 
-            return (groupList, userList, awsGroupUsers);
+            return (groupList, userList!, awsGroupUsers);
         }
     }
 }

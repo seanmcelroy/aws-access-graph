@@ -18,6 +18,7 @@ using System.Text.Json;
 using Amazon.IdentityManagement;
 using Amazon.IdentityManagement.Model;
 using Amazon.SecurityToken;
+using static AwsAccessGraph.Constants;
 
 namespace AwsAccessGraph.AwsPolicies
 {
@@ -32,7 +33,8 @@ namespace AwsAccessGraph.AwsPolicies
             List<ManagedPolicyDetail> policyList,
             List<RoleDetail> roleList,
             List<UserDetail> userList,
-            List<SAMLProviderListEntry> awsSamlIdPs
+            List<SAMLProviderListEntry> awsSamlIdPs,
+            string actualAwsAccountId
             )> LoadAwsPolicyAsync(
                 string? awsAccessKeyId,
                 string? awsSecretAccessKey,
@@ -43,49 +45,62 @@ namespace AwsAccessGraph.AwsPolicies
                 bool noFiles,
                 CancellationToken cancellationToken)
         {
-            var stsClientFactory = new Lazy<AmazonSecurityTokenServiceClient?>(() =>
-            {
-                Console.Error.Write("Getting STS client... ");
+            var actualAwsAccountId = new String(awsAccountId);
 
-                if (string.IsNullOrWhiteSpace(awsAccessKeyId)
-                    || string.IsNullOrWhiteSpace(awsSecretAccessKey))
-                {
-                    Console.Error.WriteLine("[X]");
-                    Console.Error.WriteLine($"No AWS Access Key ID or AWS Secret Access Key was specified.  Aboring STS client creation.");
-                    return null;
-                }
-
-                var sts = new AmazonSecurityTokenServiceClient(awsAccessKeyId, awsSecretAccessKey, awsSessionToken);
-                Console.Error.WriteLine("[\u2713]");
-
-                return sts;
-            });
-
-            if (string.IsNullOrWhiteSpace(awsAccountId))
-            {
-                var stsClient = stsClientFactory.Value;
-                if (stsClient == null)
-                {
-                    Console.Error.WriteLine($"Because no AWS Access Key ID or AWS Secret Access Key was specified and no AWS Account ID was provided, processing cannot continue.");
-                    System.Environment.Exit((int)Constants.ExitCodes.AwsAccountIdMissing);
-                    return default;
-                }
-                var identity = await stsClient.GetCallerIdentityAsync(new Amazon.SecurityToken.Model.GetCallerIdentityRequest(), cancellationToken);
-                awsAccountId = identity.Account;
-            }
-            Console.Error.WriteLine($"Analyzing AWS Account {awsAccountId}");
-
+            var stsClientFactory = Globals.GetStsClientFactory(awsAccessKeyId, awsSecretAccessKey, awsSessionToken);
             var iamClientFactory = new Lazy<AmazonIdentityManagementServiceClient>(() =>
             {
                 Console.Error.Write("Getting IAM client... ");
+
+                if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
+                   || string.IsNullOrWhiteSpace(awsSecretAccessKey))
+                   && string.IsNullOrWhiteSpace(awsSessionToken))
+                {
+                    Console.Error.WriteLine("Error creating IAM client: AWS credentials were not provided.");
+                    System.Environment.Exit((int)ExitCodes.AwsCredentialsNotSpecified);
+                }
+
                 var iam = new Amazon.IdentityManagement.AmazonIdentityManagementServiceClient(
                     awsAccessKeyId,
                     awsSecretAccessKey,
                     awsSessionToken);
                 Console.Error.WriteLine("[\u2713]");
 
+                // If we created the IAM client, go ahead and also create the STS client 
+                // to double-check the account id passed in matches the credential.
+                if (stsClientFactory == null)
+                {
+                    Console.Error.WriteLine($"No AWS credentials were not provided.  Aboring STS client creation.");
+                    System.Environment.Exit((int)Constants.ExitCodes.AwsAccountIdMissing);
+                }
+                else if (!stsClientFactory.IsValueCreated)
+                {
+                    var stsClient = stsClientFactory.Value;
+                    var identity = stsClient.GetCallerIdentityAsync(new Amazon.SecurityToken.Model.GetCallerIdentityRequest(), cancellationToken).Result;
+                    actualAwsAccountId = identity.Account;
+
+                    if (string.CompareOrdinal(actualAwsAccountId, awsAccountId) != 0)
+                    {
+                        Console.Error.WriteLine($"WARNING: The specified Account ID {awsAccountId} does not match the AccountId {actualAwsAccountId} read from STS.  Assuming we are actually analyzing AWS Account {actualAwsAccountId}");
+                    }
+                }
+
                 return iam;
             });
+
+            if (string.IsNullOrWhiteSpace(actualAwsAccountId))
+            {
+                if (stsClientFactory == null)
+                {
+                    Console.Error.WriteLine($"No AWS credentials were not provided.  Aboring STS client creation.");
+                    System.Environment.Exit((int)Constants.ExitCodes.AwsAccountIdMissing);
+                }
+
+                var stsClient = stsClientFactory.Value;
+                var identity = await stsClient.GetCallerIdentityAsync(new Amazon.SecurityToken.Model.GetCallerIdentityRequest(), cancellationToken);
+                actualAwsAccountId = identity.Account;
+            }
+            Console.Error.WriteLine($"Analyzing AWS Account {actualAwsAccountId}");
 
             // ############################################
             // ### Account Authorization Details Report ###
@@ -96,20 +111,20 @@ namespace AwsAccessGraph.AwsPolicies
             List<UserDetail>? userList = null;
             List<SAMLProviderListEntry>? samlIdpList = null;
             {
-                Console.Write("Enumerating Account Authorization Details... ");
-                var groupListPath = Path.Combine(outputDirectory, $"aws-{awsAccountId}-group-list.json");
-                var policyListPath = Path.Combine(outputDirectory, $"aws-{awsAccountId}-policy-list.json");
-                var roleListPath = Path.Combine(outputDirectory, $"aws-{awsAccountId}-role-list.json");
-                var userListPath = Path.Combine(outputDirectory, $"aws-{awsAccountId}-user-list.json");
-                var samlIdpListPath = Path.Combine(outputDirectory, $"aws-{awsAccountId}-saml-idp-list.json");
+                Console.WriteLine("Enumerating Account Authorization Details... ");
+                var groupListPath = () => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-group-list.json");
+                var policyListPath = () => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-policy-list.json");
+                var roleListPath = () => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-role-list.json");
+                var userListPath = () => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-user-list.json");
+                var samlIdpListPath = () => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-saml-idp-list.json");
 
                 if (!forceRefresh
-                   && File.Exists(groupListPath)
-                   && (DateTime.UtcNow - File.GetLastWriteTimeUtc(groupListPath)).TotalHours < CachedHours)
+                   && File.Exists(groupListPath.Invoke())
+                   && (DateTime.UtcNow - File.GetLastWriteTimeUtc(groupListPath.Invoke())).TotalHours < CachedHours)
                 {
                     try
                     {
-                        using (var fs = new FileStream(groupListPath, new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
+                        using (var fs = new FileStream(groupListPath.Invoke(), new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
                         {
                             groupList = await JsonSerializer.DeserializeAsync<List<GroupDetail>>(fs, cancellationToken: cancellationToken);
                         }
@@ -123,12 +138,12 @@ namespace AwsAccessGraph.AwsPolicies
                 }
 
                 if (!forceRefresh
-                    && File.Exists(policyListPath)
-                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(policyListPath)).TotalHours < CachedHours)
+                    && File.Exists(policyListPath.Invoke())
+                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(policyListPath.Invoke())).TotalHours < CachedHours)
                 {
                     try
                     {
-                        using (var fs = new FileStream(policyListPath, new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
+                        using (var fs = new FileStream(policyListPath.Invoke(), new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
                         {
                             policyList = await JsonSerializer.DeserializeAsync<List<ManagedPolicyDetail>>(fs, cancellationToken: cancellationToken);
                         }
@@ -142,12 +157,12 @@ namespace AwsAccessGraph.AwsPolicies
                 }
 
                 if (!forceRefresh
-                    && File.Exists(roleListPath)
-                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(roleListPath)).TotalHours < CachedHours)
+                    && File.Exists(roleListPath.Invoke())
+                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(roleListPath.Invoke())).TotalHours < CachedHours)
                 {
                     try
                     {
-                        using (var fs = new FileStream(roleListPath, new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
+                        using (var fs = new FileStream(roleListPath.Invoke(), new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
                         {
                             roleList = await JsonSerializer.DeserializeAsync<List<RoleDetail>>(fs, cancellationToken: cancellationToken);
                         }
@@ -161,12 +176,12 @@ namespace AwsAccessGraph.AwsPolicies
                 }
 
                 if (!forceRefresh
-                    && File.Exists(userListPath)
-                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(userListPath)).TotalHours < CachedHours)
+                    && File.Exists(userListPath.Invoke())
+                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(userListPath.Invoke())).TotalHours < CachedHours)
                 {
                     try
                     {
-                        using (var fs = new FileStream(userListPath, new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
+                        using (var fs = new FileStream(userListPath.Invoke(), new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
                         {
                             userList = await JsonSerializer.DeserializeAsync<List<UserDetail>>(fs, cancellationToken: cancellationToken);
                         }
@@ -184,6 +199,7 @@ namespace AwsAccessGraph.AwsPolicies
                     || roleList == null
                     || userList == null)
                 {
+                    // None of this was read from cache, so read fresh if we can.
                     groupList ??= new List<GroupDetail>();
                     policyList ??= new List<ManagedPolicyDetail>();
                     roleList ??= new List<RoleDetail>();
@@ -191,6 +207,7 @@ namespace AwsAccessGraph.AwsPolicies
                     var more = false;
                     string? marker = null;
                     iamClient = iamClient ?? iamClientFactory.Value;
+
                     do
                     {
                         var response = await iamClient.GetAccountAuthorizationDetailsAsync(new GetAccountAuthorizationDetailsRequest
@@ -215,21 +232,21 @@ namespace AwsAccessGraph.AwsPolicies
                         if (!Directory.Exists(outputDirectory))
                             Directory.CreateDirectory(outputDirectory);
 
-                        await File.WriteAllTextAsync(groupListPath, JsonSerializer.Serialize(groupList), cancellationToken);
-                        await File.WriteAllTextAsync(policyListPath, JsonSerializer.Serialize(policyList), cancellationToken);
-                        await File.WriteAllTextAsync(roleListPath, JsonSerializer.Serialize(roleList), cancellationToken);
-                        await File.WriteAllTextAsync(userListPath, JsonSerializer.Serialize(userList), cancellationToken);
+                        await File.WriteAllTextAsync(groupListPath.Invoke(), JsonSerializer.Serialize(groupList), cancellationToken);
+                        await File.WriteAllTextAsync(policyListPath.Invoke(), JsonSerializer.Serialize(policyList), cancellationToken);
+                        await File.WriteAllTextAsync(roleListPath.Invoke(), JsonSerializer.Serialize(roleList), cancellationToken);
+                        await File.WriteAllTextAsync(userListPath.Invoke(), JsonSerializer.Serialize(userList), cancellationToken);
                     }
                 }
 
                 // SAML providers, separate call.
                 if (!forceRefresh
-                    && File.Exists(samlIdpListPath)
-                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(samlIdpListPath)).TotalHours < CachedHours)
+                    && File.Exists(samlIdpListPath.Invoke())
+                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(samlIdpListPath.Invoke())).TotalHours < CachedHours)
                 {
                     try
                     {
-                        using (var fs = new FileStream(samlIdpListPath, new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
+                        using (var fs = new FileStream(samlIdpListPath.Invoke(), new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
                         {
                             samlIdpList = await JsonSerializer.DeserializeAsync<List<SAMLProviderListEntry>>(fs, cancellationToken: cancellationToken);
                         }
@@ -244,6 +261,7 @@ namespace AwsAccessGraph.AwsPolicies
 
                 if (samlIdpList == null)
                 {
+                    // None of this was read from cache, so read fresh if we can.
                     samlIdpList ??= new List<SAMLProviderListEntry>();
                     iamClient = iamClient ?? iamClientFactory.Value;
                     var response = await iamClient.ListSAMLProvidersAsync(new ListSAMLProvidersRequest(), cancellationToken);
@@ -254,7 +272,7 @@ namespace AwsAccessGraph.AwsPolicies
                     {
                         if (!Directory.Exists(outputDirectory))
                             Directory.CreateDirectory(outputDirectory);
-                        await File.WriteAllTextAsync(samlIdpListPath, JsonSerializer.Serialize(samlIdpList), cancellationToken);
+                        await File.WriteAllTextAsync(samlIdpListPath.Invoke(), JsonSerializer.Serialize(samlIdpList), cancellationToken);
                     }
                 }
 
@@ -262,7 +280,7 @@ namespace AwsAccessGraph.AwsPolicies
                 //policyList = policyList.Where(p => p.AttachmentCount > 0).ToList();
             }
 
-            return (groupList!, policyList!, roleList!, userList!, samlIdpList!);
+            return (groupList!, policyList!, roleList!, userList!, samlIdpList!, actualAwsAccountId!);
         }
 
         public static async Task<

@@ -15,9 +15,7 @@ compatable DOT file can be output to allow visual inspection of these
 relationships.
 
 ## Example usage
-Presuming you are using a solution like aws-mfa or aws-vault to set AWS credentials in
-environment variables, the use of the binary could look like this to identify what
-users have access to AWS Glue:
+Presuming you have either both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY set in your environment or AWS_SESSION_TOKEN set instead, or that you are are using a solution like aws-mfa or aws-vault to set AWS credentials in environment variables, the use of the binary could look like this to identify what users have access to AWS Glue:
 
 ```
 aws-access-graph glue --okta-base-url example.okta.com --okta-api-token "00IciYEXAMPLE..."

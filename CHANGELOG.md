@@ -10,3 +10,4 @@
 ### Changed
 
 - Remove printing of de-duplication stats if no dupes encountered
+- Updated dependencies to latest versions

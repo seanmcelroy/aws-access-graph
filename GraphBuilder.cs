@@ -423,7 +423,7 @@ namespace AwsAccessGraph
                 {
                     Name = og.Name!,
                     Type = NodeType.OktaGroup,
-                    Arn = og.Id,
+                    Arn = og.Id!,
                 };
                 nodes.Add(oktaGroupNode);
                 edges.Add(new Edge<Node, string>(oktaGroupNode, roleNode, "canAssume"));
@@ -454,7 +454,8 @@ namespace AwsAccessGraph
                     foreach (var oktaGroupNode in nodes.Where(n => n.Type.Equals(NodeType.OktaGroup)))
                     {
                         edges.AddRange(oktaGroupMembers[oktaGroupNode.Arn!]
-                            .Select(ogm => (ogm.UserId, ounLookup[ogm.UserId].SingleOrDefault()))
+                            .Where(ogm => ogm.UserId != null)
+                            .Select(ogm => (ogm.UserId, ounLookup[ogm.UserId!].SingleOrDefault()))
                             .Where(t => t.Item2 != default)
                             .Select(ogm => new Edge<Node, string>(
                                 ogm.Item2,
