@@ -359,8 +359,11 @@ namespace AwsAccessGraph
                                 if (verbose) Console.Error.WriteLine($"\t\t\t...which can be assumed by anything with a policy that permits sts:AssumeRole to it");
                                 // Because the role with this policy attached can be assumed by any entity that itself has a grant for sts:AssumeRole to this,
                                 // (i.e. is controlled purely by its IAM policy and not a two-way allowance), 
-                                foreach (var roleArn in rolesThatCanBeAssumed)
-                                    edges.Add(new Edge<Node, string>(roleThatCanAssume, roleNodes[roleArn].Single(), "canAssume"));
+                                foreach (var roleArn in rolesThatCanBeAssumed) {
+                                    var targetRole = roleNodes[roleArn].SingleOrDefault();
+                                    if (!default(Node).Equals(targetRole))
+                                        edges.Add(new Edge<Node, string>(roleThatCanAssume, targetRole, "canAssume"));
+                                }
                             }
                             else
                             {

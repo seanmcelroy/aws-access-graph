@@ -71,7 +71,7 @@ The following is an output of the help screen displaying command line
 arguments:
 
 ```
-AWS Access Graph 1.0.3
+AWS Access Graph 1.0.4
 Copyright (C) 2023 Sean McElroy.  All rights reserved.
 
   --aws-access-key-id     If specified, the AWS Acccess Key ID to authenticate to the AWS

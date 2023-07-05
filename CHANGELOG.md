@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.4 - 2023-07-05
+
+### Changed
+
+- Improved error handling if a missing trust policy was found during multi-acccount processing
+
 ## 1.0.3 - 2023-07-03
 
 ### Added
