@@ -2,23 +2,25 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net6.0</TargetFramework>
+    <TargetFramework>net7.0</TargetFramework>
     <RootNamespace>aws_access_graph</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyTitle>AWS Access Graph</AssemblyTitle>
-    <Version>1.0.4</Version>
+    <Version>1.1.0</Version>
     <Authors>Sean McElroy</Authors>
     <Copyright>Copyright (C) 2023 Sean McElroy.  All rights reserved.</Copyright>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AWSSDK.IdentityManagement" Version="3.7.102" />
-    <PackageReference Include="AWSSDK.SecurityToken" Version="3.7.103.16" />
+    <PackageReference Include="AWSSDK.IdentityManagement" Version="3.7.300.16" />
+    <PackageReference Include="AWSSDK.SecurityToken" Version="3.7.300.17" />
+    <PackageReference Include="AWSSDK.SSO" Version="3.7.300.16" />
+    <PackageReference Include="AWSSDK.SSOOIDC" Version="3.7.301.11" />
     <PackageReference Include="CommandLineParser" Version="2.9.1" />
     <PackageReference Include="CsvHelper" Version="30.0.1" />
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="7.0.0" />
-    <PackageReference Include="Okta.Sdk" Version="6.0.11" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
+    <PackageReference Include="Okta.Sdk" Version="7.0.1" />
   </ItemGroup>
 
 </Project>

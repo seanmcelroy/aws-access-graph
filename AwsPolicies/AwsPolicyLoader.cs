@@ -45,7 +45,7 @@ namespace AwsAccessGraph.AwsPolicies
                 bool noFiles,
                 CancellationToken cancellationToken)
         {
-            var actualAwsAccountId = new String(awsAccountId);
+            var actualAwsAccountId = new string(awsAccountId);
 
             var stsClientFactory = Globals.GetStsClientFactory(awsAccessKeyId, awsSecretAccessKey, awsSessionToken);
             var iamClientFactory = new Lazy<AmazonIdentityManagementServiceClient>(() =>
@@ -70,7 +70,7 @@ namespace AwsAccessGraph.AwsPolicies
                 // to double-check the account id passed in matches the credential.
                 if (stsClientFactory == null)
                 {
-                    Console.Error.WriteLine($"No AWS credentials were not provided.  Aboring STS client creation.");
+                    Console.Error.WriteLine($"No AWS credentials were not provided.  Aborting STS client creation.");
                     System.Environment.Exit((int)Constants.ExitCodes.AwsAccountIdMissing);
                 }
                 else if (!stsClientFactory.IsValueCreated)
@@ -92,7 +92,7 @@ namespace AwsAccessGraph.AwsPolicies
             {
                 if (stsClientFactory == null)
                 {
-                    Console.Error.WriteLine($"No AWS credentials were not provided.  Aboring STS client creation.");
+                    Console.Error.WriteLine($"No AWS credentials were not provided.  Aborting STS client creation.");
                     System.Environment.Exit((int)Constants.ExitCodes.AwsAccountIdMissing);
                 }
 
@@ -111,7 +111,7 @@ namespace AwsAccessGraph.AwsPolicies
             List<UserDetail>? userList = null;
             List<SAMLProviderListEntry>? samlIdpList = null;
             {
-                Console.WriteLine("Enumerating Account Authorization Details... ");
+                Console.Error.WriteLine("Enumerating Account Authorization Details... ");
                 var groupListPath = () => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-group-list.json");
                 var policyListPath = () => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-policy-list.json");
                 var roleListPath = () => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-role-list.json");
@@ -312,7 +312,7 @@ namespace AwsAccessGraph.AwsPolicies
                             return iam;
                         });
 
-            Console.Write("Enumerating Service Last Action action details... ");
+            Console.Error.WriteLine("Enumerating Service Last Action action details... ");
 
             // Get this for each role.
             var roleJobIds = new Queue<(string RoleId, string JobId)>(roleList.Count);
@@ -323,7 +323,7 @@ namespace AwsAccessGraph.AwsPolicies
                    && File.Exists(roleActionDetailsPath)
                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(roleActionDetailsPath)).TotalHours < CachedHours)
                 {
-                    iamClient = iamClient ?? iamClientFactory.Value;
+                    iamClient ??= iamClientFactory.Value;
                     do
                     {
                         var response = await iamClient.GenerateServiceLastAccessedDetailsAsync(new GenerateServiceLastAccessedDetailsRequest

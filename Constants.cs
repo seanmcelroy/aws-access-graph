@@ -377,6 +377,8 @@ namespace AwsAccessGraph
             AwsCredentialsNotSpecified = -5,
             AwsAccountIdMissing = -6,
             TargetServiceNotFound = -7,
+            AwsProfileNotFound = -8,
+            OktaCredentialsNotSpecified = -9,
         }
     }
 }

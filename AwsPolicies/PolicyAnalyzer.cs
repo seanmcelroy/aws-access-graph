@@ -29,7 +29,7 @@ namespace AwsAccessGraph.AwsPolicies
             PolicyArn policyArn,
             string policyDocument,
             IEnumerable<RoleDetail> roleList,
-            string? limitToAwsServicePrefix)
+            string[] limitToAwsServicePrefixes)
         {
             AwsPolicy policy;
             try
@@ -96,7 +96,9 @@ namespace AwsAccessGraph.AwsPolicies
                         //if (!Constants.AwsServicePolicyNames.TryGetValue(actionParts[0].ToLowerInvariant(), out string? awsService))
                         //    awsService = $"UNKNOWN {actionParts[0]}";
 
-                        if (limitToAwsServicePrefix == null || string.Compare(actionParts[0], limitToAwsServicePrefix, StringComparison.OrdinalIgnoreCase) == 0)
+                        if (limitToAwsServicePrefixes == null
+                            || !limitToAwsServicePrefixes.Any()
+                            || limitToAwsServicePrefixes.Any(p => string.Compare(actionParts[0], p, StringComparison.OrdinalIgnoreCase) == 0))
                         {
                             stanzas.Add(new PolicyStanza
                             {

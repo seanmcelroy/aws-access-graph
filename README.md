@@ -71,16 +71,24 @@ The following is an output of the help screen displaying command line
 arguments:
 
 ```
-AWS Access Graph 1.0.4
+AWS Access Graph 1.1.0
 Copyright (C) 2023 Sean McElroy.  All rights reserved.
 
-  --aws-access-key-id     If specified, the AWS Acccess Key ID to authenticate to the AWS
+  --aws-profile           If specified, the AWS profile configured by this name in the
+                          local environment is used.  This can be used to configure a
+                          profile for AWS IAM Identity Center and will open the SSO window
+                          as needed to obtain credentials.  This is the preferred
+                          authentication mechanism to manually specifying the access key,
+                          secret key, and session token.
+
+  --aws-access-key-id     If specified, the AWS Access Key ID to authenticate to the AWS
                           API.  If this is not specified but a value is present in the
                           environment variable AWS_ACCESS_KEY_ID, that value will be used
                           instead.  If that is not specified either, cached AWS policies
                           will be ignored, and this will be read programmatically using STS
                           get-caller-identity from the supplied credentials.  This value
-                          usually begins with AKIA or ASIA
+                          usually begins with AKIA or ASIA.  Please see --aws-profile for
+                          a better way to specify credentials.
 
   --aws-secret-key        If specified, the AWS Secret Access Key to authenticate to the 
                           AWS API.  If this is not specified but a value is present in the
@@ -88,12 +96,14 @@ Copyright (C) 2023 Sean McElroy.  All rights reserved.
                           used instead.  If that is not specified either, cached AWS 
                           policies will be ignored, and this will be read programmatically
                           using STS get-caller-identity from the supplied credentials.
+                          Please see --aws-profile for a better way to specify credentials.
 
   --aws-session-token     If specified, the AWS Session Token to authenticate to the AWS
                           API.  If this is not specified but a value is present in the
                           environment variable AWS_SESSION_TOKEN, that value will be used
                           instead.  This is only relevant when a temporary session token is
-                          used instead of a static IAM access key.
+                          used instead of a static IAM access key.  Please see 
+                          --aws-profile for a better way to specify credentials.
 
   --aws-account-id        If specified, the account number of the AWS account to analyze.  
                           If this is not specified but a value is present in the environment
@@ -140,6 +150,8 @@ Copyright (C) 2023 Sean McElroy.  All rights reserved.
   --version               Display version information.
 
   Service (pos. 0)        (Default: ec2) AWS service prefix for which to analyze authorizations.
+                          Note, this value can be a comma-delimited list of service prefixes,
+                          such as iam,kms,ec2 to output multiple reports in a single run.
 
   DB Path (pos. 1)        (Default: ./db) Path to cache API results for offline processing.
 

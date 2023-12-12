@@ -14,6 +14,9 @@ You should have received a copy of the GNU Affero General Public License along w
 aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 */
 
+using System.Diagnostics;
+using Amazon.Runtime;
+using Amazon.Runtime.CredentialManagement;
 using AwsAccessGraph;
 using AwsAccessGraph.DirectedGraphMarkupLanguage;
 using AwsAccessGraph.Graphviz;
@@ -39,14 +42,16 @@ internal class Program
                 return 0;
             }
 
-            if (!Constants.AwsServicePolicyNames.ContainsKey(opts.AwsServicePrefix.ToLowerInvariant()))
+            if (!opts.AwsServicePrefix.Contains(',') &&
+                !Constants.AwsServicePolicyNames.ContainsKey(opts.AwsServicePrefix.ToLowerInvariant()))
             {
+                Console.Error.WriteLine($"Service {opts.AwsServicePrefix} not specified.  Must be a valid AWS service prefix or a common-delimited list of valid service prefixes");
                 return (int)ExitCodes.InvalidAwsServicePrefix;
             }
 
+            var cts = new CancellationTokenSource();
             try
             {
-                var cts = new CancellationTokenSource();
                 Console.CancelKeyPress += delegate
                 {
                     cts.Cancel();
@@ -66,10 +71,82 @@ internal class Program
                     Directory.CreateDirectory(outputPath);
                 }
 
-                var awsAccessKeyId = opts.AwsAccessKeyId ?? Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
-                var awsSecretAccessKey = opts.AwsSecretAccessKey ?? Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
-                var awsSessionToken = opts.AwsSessionToken ?? Environment.GetEnvironmentVariable("AWS_SESSION_TOKEN");
-                var awsAccountIdArg = opts.AwsAccountId ?? Environment.GetEnvironmentVariable("AWS_ACCOUNT_ID");
+                string? awsAccessKeyId = null, awsSecretAccessKey = null, awsSessionToken = null, awsAccountIdArg = null;
+                if (!string.IsNullOrWhiteSpace(opts.AwsProfileName))
+                {
+                    var chain = new CredentialProfileStoreChain();
+                    if (!chain.TryGetAWSCredentials(opts.AwsProfileName, out var awsCredentials))
+                    {
+                        Console.Error.WriteLine($"Failed to find the {opts.AwsProfileName} profile");
+                        return (int)ExitCodes.AwsProfileNotFound;
+                    }
+
+                    // IAM Identity Center
+                    if (awsCredentials is SSOAWSCredentials ssoCredentials)
+                    {
+                        ssoCredentials.Options.ClientName = "aws-access-graph";
+                        ssoCredentials.Options.SsoVerificationCallback = args =>
+                        {
+                            Console.Error.WriteLine($"Launching SSO window to obtain credentials for the {opts.AwsProfileName} profile");
+                            Process.Start(new ProcessStartInfo
+                            {
+                                FileName = args.VerificationUriComplete,
+                                UseShellExecute = true
+                            });
+                        };
+
+                        var credentials = ssoCredentials.GetCredentials();
+                        awsAccessKeyId = opts.AwsAccessKeyId ?? credentials.AccessKey;
+                        awsSecretAccessKey = opts.AwsSecretAccessKey ?? credentials.SecretKey;
+                        awsSessionToken = opts.AwsSessionToken ?? credentials.Token;
+                        awsAccountIdArg = opts.AwsAccountId ?? ssoCredentials.AccountId;
+                    }
+                    else if (awsCredentials is AssumeRoleAWSCredentials assumeRoleCredentials)
+                    {
+                        Console.Error.WriteLine($"Reading env variables and command line argument overrides for credentials");
+                        awsAccessKeyId = opts.AwsAccessKeyId ?? Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
+                        awsSecretAccessKey = opts.AwsSecretAccessKey ?? Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
+                        awsSessionToken = opts.AwsSessionToken ?? Environment.GetEnvironmentVariable("AWS_SESSION_TOKEN");
+                        awsAccountIdArg = opts.AwsAccountId ?? Environment.GetEnvironmentVariable("AWS_ACCOUNT_ID");
+
+                        if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
+                            || string.IsNullOrWhiteSpace(awsSecretAccessKey))
+                            && string.IsNullOrWhiteSpace(awsSessionToken))
+                        {
+                            Console.Error.WriteLine($"Error: A profile name {opts.AwsProfileName} with a role assumption was specified, but AWS credentials were not provided.");
+                            return (int)ExitCodes.AwsCredentialsNotSpecified;
+                        }
+
+                        Console.Error.WriteLine($"Attempting to gather AWS assume role credentials for the {opts.AwsProfileName} profile");
+                        assumeRoleCredentials.Options.MfaTokenCodeCallback = () =>
+                        {
+                            Console.WriteLine($"Please enter MFA code for {assumeRoleCredentials.Options.MfaSerialNumber}:");
+                            return Console.ReadLine();
+                        };
+
+                        var assumedCredentials = assumeRoleCredentials.GetCredentials();
+                        awsAccessKeyId = assumedCredentials.AccessKey;
+                        awsSecretAccessKey = assumedCredentials.SecretKey;
+                        awsSessionToken = assumedCredentials.Token;
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"Attempting to gather AWS credentials for the {opts.AwsProfileName} profile");
+                        var credentials = awsCredentials.GetCredentials();
+                        awsAccessKeyId = opts.AwsAccessKeyId ?? credentials.AccessKey;
+                        awsSecretAccessKey = opts.AwsSecretAccessKey ?? credentials.SecretKey;
+                        awsSessionToken = opts.AwsSessionToken ?? credentials.Token;
+                        awsAccountIdArg = opts.AwsAccountId ?? Environment.GetEnvironmentVariable("AWS_ACCOUNT_ID");
+                    }
+                }
+                else
+                {
+                    Console.Error.WriteLine($"Reading env variables and command line argument overrides for credentials");
+                    awsAccessKeyId = opts.AwsAccessKeyId ?? Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
+                    awsSecretAccessKey = opts.AwsSecretAccessKey ?? Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
+                    awsSessionToken = opts.AwsSessionToken ?? Environment.GetEnvironmentVariable("AWS_SESSION_TOKEN");
+                    awsAccountIdArg = opts.AwsAccountId ?? Environment.GetEnvironmentVariable("AWS_ACCOUNT_ID");
+                }
 
                 if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
                     || string.IsNullOrWhiteSpace(awsSecretAccessKey))
@@ -136,6 +213,17 @@ internal class Program
 
                 var actualAwsAccountIds = new List<string>();
 
+                var oktaDomain = opts.OktaBaseUrl ?? Environment.GetEnvironmentVariable("OKTA_BASE_URL");
+                var oktaApiToken = opts.OktaApiToken ?? Environment.GetEnvironmentVariable("OKTA_API_TOKEN");
+                var (oktaGroups, oktaUsers, oktaGroupUsers) =
+                    await AwsAccessGraph.OktaPolicies.OktaPolicyLoader.LoadOktaPolicyAsync(
+                        oktaDomain: oktaDomain,
+                        oktaApiToken: oktaApiToken,
+                        outputDirectory: dbPath,
+                        noFiles: opts.NoFiles,
+                        forceRefresh: opts.Refresh || opts.RefreshOkta,
+                        cancellationToken: cts.Token);
+
                 foreach (var awsAccountId in awsAccountIds)
                 {
                     Console.Error.WriteLine($"Processing AWS Account ID {awsAccountId}...");
@@ -151,17 +239,6 @@ internal class Program
 
                     accountRoleList.Add(actualAwsAccountId, awsRoles);
 
-                    var oktaDomain = opts.OktaBaseUrl ?? Environment.GetEnvironmentVariable("OKTA_BASE_URL");
-                    var oktaApiToken = opts.OktaApiToken ?? Environment.GetEnvironmentVariable("OKTA_API_TOKEN");
-                    var (oktaGroups, oktaUsers, oktaGroupUsers) =
-                        await AwsAccessGraph.OktaPolicies.OktaPolicyLoader.LoadOktaPolicyAsync(
-                            oktaDomain: oktaDomain,
-                            oktaApiToken: oktaApiToken,
-                            outputDirectory: dbPath,
-                            noFiles: opts.NoFiles,
-                            forceRefresh: opts.Refresh || opts.RefreshOkta,
-                            cancellationToken: cts.Token);
-
                     var (nodes, edges) = GraphBuilder.BuildAws(
                         awsGroups,
                         awsPolicies,
@@ -172,7 +249,9 @@ internal class Program
                         oktaUsers,
                         oktaGroupUsers,
                         opts.Verbose,
-                        opts.AwsServicePrefix,
+                        !opts.AwsServicePrefix.Contains(',')
+                            ? new string[] { opts.AwsServicePrefix }
+                            : opts.AwsServicePrefix.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries),
                         opts.NoPrune,
                         noIdentities: opts.NoIdentities);
 
@@ -267,21 +346,25 @@ internal class Program
                     }
                 };
 
-                var targetService = allNodes.FindServiceNode(opts.AwsServicePrefix.ToLowerInvariant());
-                if (default(Node).Equals(targetService))
+                foreach (var servicePrefix in !opts.AwsServicePrefix.Contains(',')
+                    ? new string[] { opts.AwsServicePrefix }
+                    : opts.AwsServicePrefix.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
                 {
-                    Console.Error.WriteLine($"Unable to find any service node named '{opts.AwsServicePrefix.ToLowerInvariant()}'.  Perhaps you have no cached db files for the specified account/service?");
-                    return (int)ExitCodes.TargetServiceNotFound;
-                }
-                else
-                {
-                    var pathReport = Path.Combine(outputPath, $"authorization-paths-{targetService.Name}.txt");
-                    using (var fs = opts.NoFiles ? null : new FileStream(pathReport, new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None, Options = FileOptions.Asynchronous }))
-                    using (var sw = opts.NoFiles ? null : new StreamWriter(fs!))
+                    var targetService = allNodes.FindServiceNode(servicePrefix.ToLowerInvariant());
+                    if (default(Node).Equals(targetService))
                     {
+                        Console.Error.WriteLine($"Unable to find any service node named '{servicePrefix.ToLowerInvariant()}'.  Perhaps you have no cached db files for the specified account/service?");
+                        return (int)ExitCodes.TargetServiceNotFound;
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"Reporting on service {servicePrefix}");
+                        var pathReport = Path.Combine(outputPath, $"authorization-paths-{targetService.Name}.txt");
+                        using var fs = opts.NoFiles ? null : new FileStream(pathReport, new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None, Options = FileOptions.Asynchronous });
+                        using var sw = opts.NoFiles ? null : new StreamWriter(fs!);
                         var writer = opts.NoFiles ? Console.Out : sw!;
 
-                        await writer.WriteLineAsync($"Report of accesses to {Constants.AwsServicePolicyNames[opts.AwsServicePrefix]} generated on {DateTime.UtcNow.ToString("O")}");
+                        await writer.WriteLineAsync($"Report of accesses to {Constants.AwsServicePolicyNames[servicePrefix]} generated on {DateTime.UtcNow:O}");
                         foreach (var u in allEdges
                             .FindUsersAttachedTo(targetService)
                             .GroupBy(u => u.source)
@@ -300,14 +383,16 @@ internal class Program
                 Console.Out.WriteLine($"{Environment.NewLine}Done.");
                 return 0;
             }
-            catch (Amazon.IdentityManagement.AmazonIdentityManagementServiceException amse)
+            catch (Amazon.IdentityManagement.AmazonIdentityManagementServiceException ex)
             {
-                Console.Error.WriteLine($"AWS IAM error: {amse.Message}");
+                Console.Error.WriteLine($"AWS IAM error: {ex.Message}");
+                cts.Cancel();
                 return (int)ExitCodes.AwsIamException;
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"Error!{Environment.NewLine}{ex}");
+                cts.Cancel();
                 return (int)ExitCodes.UnhandledError; // Unhandled error
             }
         },

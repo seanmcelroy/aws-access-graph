@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.0 - 2023-12-11
+
+### Added
+
+- New command line argument --aws-profile allows specifying an AWS profile configured in the local environment
+- Support for IAM Identity Center by calling a named profile instead of specifying --aws-access-key-id, --aws-secret-key, or --aws-session-token or requiring those values to be provided in the environment
+
+### Changed
+
+- If refresh-okta is specified and no Okta base URL is provided, quite with an error
+- When running a refresh run over multiple AWS accounts, read Okta data at most one time
+- Minor spelling corrections
+
 ## 1.0.4 - 2023-07-05
 
 ### Changed
