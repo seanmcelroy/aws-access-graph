@@ -17,6 +17,7 @@ aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 using System.Text.Json;
 using Okta.Sdk.Api;
 using Okta.Sdk.Client;
+using Okta.Sdk.Model;
 
 namespace AwsAccessGraph.OktaPolicies
 {
@@ -41,12 +42,12 @@ namespace AwsAccessGraph.OktaPolicies
             // ###################
             var oktaGroupClientFactory = new Lazy<GroupApi?>(() =>
                 {
-                    Console.Write("Getting Okta group API client... ");
+                    Console.Error.Write("Getting Okta group API client... ");
 
                     if (string.IsNullOrWhiteSpace(oktaDomain))
                     {
                         Console.Error.WriteLine("[X]");
-                        Console.Error.WriteLine($"No Okta Base URL (domain) was specified.  Aboring Okta group API client creation.");
+                        Console.Error.WriteLine($"WARNING: No Okta Base URL (domain) was specified.  Aborting Okta group API client creation.");
                         return null;
                     }
 
@@ -87,6 +88,11 @@ namespace AwsAccessGraph.OktaPolicies
                     var oktaGroupClient = oktaGroupClientFactory.Value;
                     if (oktaGroupClient == null)
                     {
+                        if (forceRefresh) {
+                            Console.Error.WriteLine($"ERROR: Okta cannot be refreshed because no Okta Base URL (domain) was specified.");
+                            Environment.Exit((int)Constants.ExitCodes.OktaCredentialsNotSpecified);
+                        }
+
                         Console.Error.WriteLine($"Because no Okta Base URL (domain) was specified, processing will continue without Okta data.");
                         return (
                             Array.Empty<AwsAccessGraph.OktaPolicies.OktaGroup>(),
@@ -112,7 +118,7 @@ namespace AwsAccessGraph.OktaPolicies
             // ##################
             var oktaUserClient = new Lazy<UserApi>(() =>
                 {
-                    Console.Write("Getting Okta user API client... ");
+                    Console.Error.Write("Getting Okta user API client... ");
 
                     var config = new Configuration
                     {

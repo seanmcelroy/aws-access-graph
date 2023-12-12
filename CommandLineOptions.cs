@@ -29,7 +29,10 @@ namespace AwsAccessGraph
         [Value(index: 2, MetaName = "Output Path", Required = false, Default = "./output", HelpText = "Path to cache API results for offline processing.")]
         public string OutputPath { get; set; } = "./output";
 
-        [Option("aws-access-key-id", Required = false, HelpText = "If specified, the AWS Acccess Key ID to authenticate to the AWS API.  If this is not specified but a value is present in the environment variable AWS_ACCESS_KEY_ID, that value will be used instead.  If that is not specified either, cached AWS policies will be ignored, and this will be read programmatically using STS get-caller-identity from the supplied credentials.  This value usually begins with AKIA or ASIA")]
+        [Option("aws-profile", Required = false, HelpText = "If specified, the profile name from the AWS config file to use to obtain AWS credentials.  If a profile is specified aws-access-key-id, aws-secret-key, aws-session-token, and aws-account-id arguments are ignored if provided.")]
+        public string? AwsProfileName { get; set; }
+
+        [Option("aws-access-key-id", Required = false, HelpText = "If specified, the AWS Access Key ID to authenticate to the AWS API.  If this is not specified but a value is present in the environment variable AWS_ACCESS_KEY_ID, that value will be used instead.  If that is not specified either, cached AWS policies will be ignored, and this will be read programmatically using STS get-caller-identity from the supplied credentials.  This value usually begins with AKIA or ASIA")]
         public string? AwsAccessKeyId { get; set; }
 
         [Option("aws-secret-key", Required = false, HelpText = "If specified, the AWS Secret Access Key to authenticate to the AWS API.  If this is not specified but a value is present in the environment variable AWS_SECRET_ACCESS_KEY, that value will be used instead.  If that is not specified either, cached AWS policies will be ignored, and this will be read programmatically using STS get-caller-identity from the supplied credentials.")]

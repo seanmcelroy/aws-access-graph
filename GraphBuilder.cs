@@ -32,7 +32,7 @@ namespace AwsAccessGraph
             IEnumerable<OktaUser> oktaUsers,
             Dictionary<OktaGroupId, OktaGroupMember[]> oktaGroupMembers,
             bool verbose,
-            string? limitToAwsServicePrefix,
+            string[] limitToAwsServicePrefixes,
             bool noPruneUnrelatedNodes,
             bool noIdentities
         )
@@ -42,7 +42,7 @@ namespace AwsAccessGraph
             var policyAnalyses = new Dictionary<PolicyArn, PolicyAnalyzerResult>();
             foreach (var p in awsPolicies)
             {
-                var result = PolicyAnalyzer.Analyze(p.Arn, Uri.UnescapeDataString(p.PolicyVersionList.Single(v => v.VersionId == p.DefaultVersionId).Document), awsRoles, limitToAwsServicePrefix);
+                var result = PolicyAnalyzer.Analyze(p.Arn, Uri.UnescapeDataString(p.PolicyVersionList.Single(v => v.VersionId == p.DefaultVersionId).Document), awsRoles, limitToAwsServicePrefixes);
                 if (!policyAnalyses.TryAdd(p.Arn, result))
                 {
                     // This policy's could have broken across pagination.
@@ -151,7 +151,7 @@ namespace AwsAccessGraph
                         Arn = $"{g.GroupName}/{inlinePolicy.PolicyName}",
                     };
 
-                    var result = PolicyAnalyzer.Analyze(inlinePolicyNode.Arn, Uri.UnescapeDataString(inlinePolicy.PolicyDocument), awsRoles, limitToAwsServicePrefix);
+                    var result = PolicyAnalyzer.Analyze(inlinePolicyNode.Arn, Uri.UnescapeDataString(inlinePolicy.PolicyDocument), awsRoles, limitToAwsServicePrefixes);
 
                     // Add directed edges from this policy to applicable services.
                     var ct2 = 0;
@@ -214,7 +214,7 @@ namespace AwsAccessGraph
                         Arn = $"{r.RoleName}/{inlinePolicy.PolicyName}",
                     };
 
-                    var result = PolicyAnalyzer.Analyze(inlinePolicyNode.Arn, Uri.UnescapeDataString(inlinePolicy.PolicyDocument), awsRoles, limitToAwsServicePrefix);
+                    var result = PolicyAnalyzer.Analyze(inlinePolicyNode.Arn, Uri.UnescapeDataString(inlinePolicy.PolicyDocument), awsRoles, limitToAwsServicePrefixes);
 
                     // Add directed edges from this policy to applicable services.
                     var ct2 = 0;
@@ -292,7 +292,7 @@ namespace AwsAccessGraph
                             Arn = $"{u.UserName}/{inlinePolicy.PolicyName}",
                         };
 
-                        var result = PolicyAnalyzer.Analyze(inlinePolicyNode.Arn, Uri.UnescapeDataString(inlinePolicy.PolicyDocument), awsRoles, limitToAwsServicePrefix);
+                        var result = PolicyAnalyzer.Analyze(inlinePolicyNode.Arn, Uri.UnescapeDataString(inlinePolicy.PolicyDocument), awsRoles, limitToAwsServicePrefixes);
 
                         // Add directed edges from this policy to applicable services.
                         var ct2 = 0;
