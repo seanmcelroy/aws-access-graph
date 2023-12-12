@@ -12,12 +12,14 @@
 - If refresh-okta is specified and no Okta base URL is provided, quite with an error
 - When running a refresh run over multiple AWS accounts, read Okta data at most one time
 - Minor spelling corrections
+- Authorization Path reports now list the accounts over which they were run in the header.
+- Authorization Path reports now provide the AWS account ID for AWS resources when run over more than one account.
 
 ## 1.0.4 - 2023-07-05
 
 ### Changed
 
-- Improved error handling if a missing trust policy was found during multi-acccount processing
+- Improved error handling if a missing trust policy was found during multi-account processing
 
 ## 1.0.3 - 2023-07-03
 

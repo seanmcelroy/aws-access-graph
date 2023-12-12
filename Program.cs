@@ -331,19 +331,21 @@ internal class Program
                 // Who has access to Glue?
                 var pathNodeName = (Node n) =>
                 {
-                    switch (n.Type)
+                    var isArn = Amazon.Arn.TryParse(n.Arn, out Amazon.Arn arn);
+                    var arnSuffix = isArn && actualAwsAccountIds.Count > 1 ? $"({arn.AccountId})" : string.Empty;
+                    return n.Type switch
                     {
-                        case NodeType.AwsInlinePolicy: return $"AwsInlinePolicy:{n.Name}";
-                        case NodeType.AwsPolicy: return $"AwsIamPolicy:{n.Name}";
-                        case NodeType.AwsGroup: return $"AwsIamGroup:{n.Name}";
-                        case NodeType.AwsRole: return $"AwsIamRole:{n.Name}";
-                        case NodeType.AwsUser: return $"AwsIamUser:{n.Name}";
-                        case NodeType.AwsService: return $"{n.Name}";
-                        case NodeType.OktaUser: return $"OktaUser:{n.Name}";
-                        case NodeType.OktaGroup: return $"OktaGroup:{n.Name}";
-                        case NodeType.Identity: return $"ID:{n.Name}";
-                        default: return n.Name;
-                    }
+                        NodeType.AwsInlinePolicy => $"AwsInlinePolicy:{n.Name}",
+                        NodeType.AwsPolicy => $"AwsIamPolicy:{n.Name}{arnSuffix}",
+                        NodeType.AwsGroup => $"AwsIamGroup:{n.Name}{arnSuffix}",
+                        NodeType.AwsRole => $"AwsIamRole:{n.Name}{arnSuffix}",
+                        NodeType.AwsUser => $"AwsIamUser:{n.Name}{arnSuffix}",
+                        NodeType.AwsService => $"{n.Name}",
+                        NodeType.OktaUser => $"OktaUser:{n.Name}",
+                        NodeType.OktaGroup => $"OktaGroup:{n.Name}",
+                        NodeType.Identity => $"ID:{n.Name}",
+                        _ => n.Name,
+                    };
                 };
 
                 foreach (var servicePrefix in !opts.AwsServicePrefix.Contains(',')
@@ -364,7 +366,7 @@ internal class Program
                         using var sw = opts.NoFiles ? null : new StreamWriter(fs!);
                         var writer = opts.NoFiles ? Console.Out : sw!;
 
-                        await writer.WriteLineAsync($"Report of accesses to {Constants.AwsServicePolicyNames[servicePrefix]} generated on {DateTime.UtcNow:O}");
+                        await writer.WriteLineAsync($"Report of accesses to {Constants.AwsServicePolicyNames[servicePrefix]} generated on {DateTime.UtcNow:O} for account(s) {actualAwsAccountIds.Aggregate((c, n) => c + "," + n)}.");
                         foreach (var u in allEdges
                             .FindUsersAttachedTo(targetService)
                             .GroupBy(u => u.source)
