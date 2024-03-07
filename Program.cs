@@ -27,7 +27,7 @@ internal class Program
 {
     private static async Task<int> Main(string[] args)
     {
-        Console.Error.WriteLine("aws-access-graph  Copyright (C) 2023  Sean McElroy");
+        Console.Error.WriteLine("aws-access-graph  Copyright (C) 2024  Sean McElroy");
         Console.Error.WriteLine("This program comes with ABSOLUTELY NO WARRANTY.");
         Console.Error.WriteLine("This is free software, and you are welcome to redistribute it");
         Console.Error.WriteLine("under certain conditions; see the LICENSE.txt file for details.");
