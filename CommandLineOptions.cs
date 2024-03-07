@@ -68,7 +68,7 @@ namespace AwsAccessGraph
         [Option(longName: "no-files", Required = false, HelpText = "If specified, no files will be written.  All API accesses are not cached and all results are sent to standard output or standard error only.")]
         public bool NoFiles { get; set; } = false;
 
-        [Option(longName: "no-identity", Required = false, HelpText = "If specified, graphs will not include individual principals, and will terminate at the group or role level.  In complex graphs, this can improve readibility of DGML or DOT files.")]
+        [Option(longName: "no-identity", Required = false, HelpText = "If specified, graphs will not include individual principals, and will terminate at the group or role level.  In complex graphs, this can improve readability of DGML or DOT files.")]
         public bool NoIdentities { get; set; } = false;
 
         [Option(longName: "no-prune", Required = false, HelpText = "If specified, nodes for services that are not the AwsServicePrefix or that are not part of a direct service-to-identity path are included on any output graphs.")]

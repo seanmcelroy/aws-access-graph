@@ -27,10 +27,12 @@ namespace AwsAccessGraph
                 return default(Node);
 
             Node result;
-            try {
+            try
+            {
                 result = matchingNodes.SingleOrDefault();
             }
-            catch {
+            catch
+            {
                 Console.Error.WriteLine($"More than one service node found for '{serviceName}', found {nodes.Count(n => string.Compare(n.Name, serviceName, StringComparison.OrdinalIgnoreCase) == 0 && n.Type.Equals(NodeType.AwsService))}");
                 throw;
             }
@@ -56,14 +58,24 @@ namespace AwsAccessGraph
             this IEnumerable<Edge<Node, string>> edges,
             Node target)
         {
-            return edges.FindDescendents(target, new List<Edge<Node, string>>(), NodeType.AwsService);
+            return edges.FindDescendants(target, new List<Edge<Node, string>>(), NodeType.AwsService);
         }
 
-        public static IEnumerable<(Node source, IEnumerable<Edge<Node, string>> path)> FindUsersAttachedTo(
+        public static IEnumerable<(Node source, IEnumerable<Edge<Node, string>> path)> FindIdentityGroupsAttachedTo(
             this IEnumerable<Edge<Node, string>> edges,
             Node target)
         {
-            return edges.FindAncestors(target, new List<Edge<Node, string>>(), NodeType.Identity);
+            if (edges.FindAncestors(target, new List<Edge<Node, string>>(), NodeType.OktaGroup).Any())
+                return edges.FindAncestors(target, new List<Edge<Node, string>>(), NodeType.OktaGroup);
+            else
+                return edges.FindAncestors(target, new List<Edge<Node, string>>(), NodeType.AwsGroup);
+        }
+
+        public static IEnumerable<(Node source, IEnumerable<Edge<Node, string>> path)> FindIdentityPrincipalsAttachedTo(
+            this IEnumerable<Edge<Node, string>> edges,
+            Node target)
+        {
+            return edges.FindAncestors(target, new List<Edge<Node, string>>(), NodeType.IdentityPrincipal);
         }
 
         private static IEnumerable<(Node source, IEnumerable<Edge<Node, string>> path)> FindAncestors(
@@ -100,7 +112,7 @@ namespace AwsAccessGraph
             }
         }
 
-        private static IEnumerable<(Node source, IEnumerable<Edge<Node, string>> path)> FindDescendents(
+        private static IEnumerable<(Node source, IEnumerable<Edge<Node, string>> path)> FindDescendants(
             this IEnumerable<Edge<Node, string>> edges,
             Node target,
             IEnumerable<Edge<Node, string>> path,
@@ -126,7 +138,7 @@ namespace AwsAccessGraph
                 }
                 else
                 {
-                    foreach (var n in edges.FindDescendents(st.Destination, pathArray, descendentNodeType))
+                    foreach (var n in edges.FindDescendants(st.Destination, pathArray, descendentNodeType))
                     {
                         yield return n;
                     }

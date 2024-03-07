@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1 - 2024-03-06
+
+### Changed
+
+- (BUG) If no-identity is specified, provide group (but not user) data.  Previously this created an empty report
+
 ## 1.1.0 - 2023-12-11
 
 ### Added

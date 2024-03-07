@@ -95,9 +95,9 @@ namespace AwsAccessGraph.OktaPolicies
 
                         Console.Error.WriteLine($"Because no Okta Base URL (domain) was specified, processing will continue without Okta data.");
                         return (
-                            Array.Empty<AwsAccessGraph.OktaPolicies.OktaGroup>(),
-                            Array.Empty<AwsAccessGraph.OktaPolicies.OktaUser>(),
-                            new Dictionary<string, AwsAccessGraph.OktaPolicies.OktaGroupMember[]>()
+                            Array.Empty<OktaGroup>(),
+                            Array.Empty<OktaUser>(),
+                            new Dictionary<string, OktaGroupMember[]>()
                         );
                     }
 

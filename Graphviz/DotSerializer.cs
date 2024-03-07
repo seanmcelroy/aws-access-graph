@@ -49,7 +49,7 @@ namespace AwsAccessGraph.Graphviz
 
                 if (string.CompareOrdinal(n.Arn, "*") == 0)
                     stmts.Add($"\"{n.Arn!.Replace("*", "EVERYTHING!")}\" [color=red label=\"{nodeName}\", type=\"{n.Type}\"]");
-                else if (n.Type == NodeType.Identity)
+                else if (n.Type == NodeType.IdentityPrincipal)
                     stmts.Add($"\"{n.Arn}\" [color=blue label=\"{nodeName}\", type=\"{n.Type}\"]");
                 else if (n.Type == NodeType.AwsUser)
                     stmts.Add($"\"{n.Arn}\" [color=cornflowerblue label=\"{nodeName}\", type=\"{n.Type}\"]");

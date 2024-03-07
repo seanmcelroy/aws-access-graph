@@ -243,82 +243,81 @@ namespace AwsAccessGraph
             }
 
             // Add users to graph
-            if (!noIdentities)
-                foreach (var u in awsUsers)
+            foreach (var u in awsUsers)
+            {
+                var userNode = new Node
                 {
-                    var userNode = new Node
+                    Name = u.UserName,
+                    Type = NodeType.AwsUser,
+                    Arn = u.Arn,
+                };
+
+                // Add directed edges from this user to groups in which the user is a member
+                var ct = 0;
+                foreach (var groupName in u.GroupList)
+                {
+                    var groupNode = nodes.SingleOrDefault(n =>
+                        n.Type.Equals(NodeType.AwsGroup)
+                        && string.Compare(n.Name, groupName, StringComparison.OrdinalIgnoreCase) == 0);
+
+                    if (groupNode != default)
                     {
-                        Name = u.UserName,
-                        Type = NodeType.AwsUser,
-                        Arn = u.Arn,
+                        edges.Add(new Edge<Node, string>(userNode, groupNode, "memberOf"));
+                        ct++;
+                    }
+                }
+
+                // Add directed edges from this user to applicable stand-alone policies.
+                foreach (var policyArn in u.AttachedManagedPolicies.Select(p => p.PolicyArn))
+                {
+                    var policyNode = nodes.SingleOrDefault(n =>
+                        n.Type.Equals(NodeType.AwsPolicy)
+                        && string.Compare(n.Arn, policyArn, StringComparison.OrdinalIgnoreCase) == 0);
+
+                    if (policyNode != default)
+                    {
+                        edges.Add(new Edge<Node, string>(userNode, policyNode, "attachedTo"));
+                        ct++;
+                    }
+                }
+
+                // Add directed edges from this user to applicable inline policies.
+                foreach (var inlinePolicy in u.UserPolicyList)
+                {
+                    var inlinePolicyNode = new Node
+                    {
+                        Name = $"{u.UserName}/{inlinePolicy.PolicyName}",
+                        Type = NodeType.AwsInlinePolicy,
+                        Arn = $"{u.UserName}/{inlinePolicy.PolicyName}",
                     };
 
-                    // Add directed edges from this user to groups in which the user is a member
-                    var ct = 0;
-                    foreach (var groupName in u.GroupList)
-                    {
-                        var groupNode = nodes.SingleOrDefault(n =>
-                            n.Type.Equals(NodeType.AwsGroup)
-                            && string.Compare(n.Name, groupName, StringComparison.OrdinalIgnoreCase) == 0);
+                    var result = PolicyAnalyzer.Analyze(inlinePolicyNode.Arn, Uri.UnescapeDataString(inlinePolicy.PolicyDocument), awsRoles, limitToAwsServicePrefixes);
 
-                        if (groupNode != default)
+                    // Add directed edges from this policy to applicable services.
+                    var ct2 = 0;
+                    foreach (var servicePrefix in result.Stanzas.Select(pp => pp.Service).Distinct())
+                    {
+                        var serviceNode = nodes.SingleOrDefault(n =>
+                            n.Type.Equals(NodeType.AwsService)
+                            && string.Compare(n.Arn, servicePrefix, StringComparison.OrdinalIgnoreCase) == 0);
+                        if (serviceNode != default)
                         {
-                            edges.Add(new Edge<Node, string>(userNode, groupNode, "memberOf"));
-                            ct++;
+                            edges.Add(new Edge<Node, string>(inlinePolicyNode, serviceNode, "references"));
+                            ct2++;
                         }
                     }
 
-                    // Add directed edges from this user to applicable stand-alone policies.
-                    foreach (var policyArn in u.AttachedManagedPolicies.Select(p => p.PolicyArn))
+                    if (noPruneUnrelatedNodes || ct2 > 0)
                     {
-                        var policyNode = nodes.SingleOrDefault(n =>
-                            n.Type.Equals(NodeType.AwsPolicy)
-                            && string.Compare(n.Arn, policyArn, StringComparison.OrdinalIgnoreCase) == 0);
-
-                        if (policyNode != default)
-                        {
-                            edges.Add(new Edge<Node, string>(userNode, policyNode, "attachedTo"));
-                            ct++;
-                        }
+                        nodes.Add(inlinePolicyNode);
+                        edges.Add(new Edge<Node, string>(userNode, inlinePolicyNode, "attachedTo"));
+                        ct++;
                     }
-
-                    // Add directed edges from this user to applicable inline policies.
-                    foreach (var inlinePolicy in u.UserPolicyList)
-                    {
-                        var inlinePolicyNode = new Node
-                        {
-                            Name = $"{u.UserName}/{inlinePolicy.PolicyName}",
-                            Type = NodeType.AwsInlinePolicy,
-                            Arn = $"{u.UserName}/{inlinePolicy.PolicyName}",
-                        };
-
-                        var result = PolicyAnalyzer.Analyze(inlinePolicyNode.Arn, Uri.UnescapeDataString(inlinePolicy.PolicyDocument), awsRoles, limitToAwsServicePrefixes);
-
-                        // Add directed edges from this policy to applicable services.
-                        var ct2 = 0;
-                        foreach (var servicePrefix in result.Stanzas.Select(pp => pp.Service).Distinct())
-                        {
-                            var serviceNode = nodes.SingleOrDefault(n =>
-                                n.Type.Equals(NodeType.AwsService)
-                                && string.Compare(n.Arn, servicePrefix, StringComparison.OrdinalIgnoreCase) == 0);
-                            if (serviceNode != default)
-                            {
-                                edges.Add(new Edge<Node, string>(inlinePolicyNode, serviceNode, "references"));
-                                ct2++;
-                            }
-                        }
-
-                        if (noPruneUnrelatedNodes || ct2 > 0)
-                        {
-                            nodes.Add(inlinePolicyNode);
-                            edges.Add(new Edge<Node, string>(userNode, inlinePolicyNode, "attachedTo"));
-                            ct++;
-                        }
-                    }
-
-                    if (noPruneUnrelatedNodes || ct > 0)
-                        nodes.Add(userNode);
                 }
+
+                if (noPruneUnrelatedNodes || ct > 0)
+                    nodes.Add(userNode);
+            }
 
             // Add policy(attachedTo)role(targeting)role assumption edges to graph
             var roleNodes = nodes.Where(n => n.Type.Equals(NodeType.AwsRole)).ToLookup(r => r.Arn);
@@ -359,7 +358,8 @@ namespace AwsAccessGraph
                                 if (verbose) Console.Error.WriteLine($"\t\t\t...which can be assumed by anything with a policy that permits sts:AssumeRole to it");
                                 // Because the role with this policy attached can be assumed by any entity that itself has a grant for sts:AssumeRole to this,
                                 // (i.e. is controlled purely by its IAM policy and not a two-way allowance), 
-                                foreach (var roleArn in rolesThatCanBeAssumed) {
+                                foreach (var roleArn in rolesThatCanBeAssumed)
+                                {
                                     var targetRole = roleNodes[roleArn].SingleOrDefault();
                                     if (!default(Node).Equals(targetRole))
                                         edges.Add(new Edge<Node, string>(roleThatCanAssume, targetRole, "canAssume"));
@@ -433,69 +433,66 @@ namespace AwsAccessGraph
             }
 
             // Add applicable Okta users and related edges to graph
-            if (!noIdentities)
+            var oktaUserNodes = nodes
+                .Where(n => n.Type.Equals(NodeType.OktaGroup))
+                .SelectMany(n => oktaGroupMembers[n.Arn!])
+                .Select(n => n.UserId)
+                .Distinct()
+                .Select(u => oktaUsers.SingleOrDefault(ou => string.Compare(ou.UserId, u, StringComparison.OrdinalIgnoreCase) == 0))
+                .Where(u => u.Login != null) // This is necessary b/c user could have been suspended/deactivated yet still assigned.
+                .Select(u => new Node
+                {
+                    Name = u.Login,
+                    Type = NodeType.OktaUser,
+                    Arn = u.UserId
+                })
+                .ToArray(); // Required so we can modify the collection in the following statement.
+            nodes.AddRange(oktaUserNodes);
+
+            // Now the Okta user-group edges.
             {
-                var oktaUserNodes = nodes
-                    .Where(n => n.Type.Equals(NodeType.OktaGroup))
-                    .SelectMany(n => oktaGroupMembers[n.Arn!])
-                    .Select(n => n.UserId)
-                    .Distinct()
-                    .Select(u => oktaUsers.SingleOrDefault(ou => string.Compare(ou.UserId, u, StringComparison.OrdinalIgnoreCase) == 0))
-                    .Where(u => u.Login != null) // This is necessary b/c user could have been suspended/deactivated yet still assigned.
-                    .Select(u => new Node
-                    {
-                        Name = u.Login,
-                        Type = NodeType.OktaUser,
-                        Arn = u.UserId
-                    })
-                    .ToArray(); // Required so we can modify the collection in the following statement.
-                nodes.AddRange(oktaUserNodes);
-
-                // Now the Okta user-group edges.
+                var ounLookup = oktaUserNodes.ToLookup(oun => oun.Arn);
+                foreach (var oktaGroupNode in nodes.Where(n => n.Type.Equals(NodeType.OktaGroup)))
                 {
-                    var ounLookup = oktaUserNodes.ToLookup(oun => oun.Arn);
-                    foreach (var oktaGroupNode in nodes.Where(n => n.Type.Equals(NodeType.OktaGroup)))
-                    {
-                        edges.AddRange(oktaGroupMembers[oktaGroupNode.Arn!]
-                            .Where(ogm => ogm.UserId != null)
-                            .Select(ogm => (ogm.UserId, ounLookup[ogm.UserId!].SingleOrDefault()))
-                            .Where(t => t.Item2 != default)
-                            .Select(ogm => new Edge<Node, string>(
-                                ogm.Item2,
-                                oktaGroupNode,
-                                "memberOf"
-                            )));
-                    }
+                    edges.AddRange(oktaGroupMembers[oktaGroupNode.Arn!]
+                        .Where(ogm => ogm.UserId != null)
+                        .Select(ogm => (ogm.UserId, ounLookup[ogm.UserId!].SingleOrDefault()))
+                        .Where(t => t.Item2 != default)
+                        .Select(ogm => new Edge<Node, string>(
+                            ogm.Item2,
+                            oktaGroupNode,
+                            "memberOf"
+                        )));
                 }
+            }
 
-                // Finally, group AwsIamUser and OktaUsers
-                {
-                    var awsUserNodes = nodes
-                        .Where(n => n.Type.Equals(NodeType.AwsUser))
-                        .ToArray();
+            // Finally, group AwsIamUser and OktaUsers
+            {
+                var awsUserNodes = nodes
+                    .Where(n => n.Type.Equals(NodeType.AwsUser))
+                    .ToArray();
 
-                    var subIdentityNodesProto = oktaUserNodes.Union(awsUserNodes)
-                        .GroupBy(x => x.Name.Split('@')[0])
-                        .ToDictionary(k => k.Key, v => v.ToArray());
+                var subIdentityNodesProto = oktaUserNodes.Union(awsUserNodes)
+                    .GroupBy(x => x.Name.Split('@')[0])
+                    .ToDictionary(k => k.Key, v => v.ToArray());
 
-                    var rootIdentityNodes = subIdentityNodesProto
-                        .ToDictionary(k => new Node
-                        {
-                            Arn = k.Key,
-                            Type = NodeType.Identity,
-                            Name = k.Key
-                        }, v => v.Value);
-                    nodes.AddRange(rootIdentityNodes.Keys);
-
-                    foreach (var kvp in rootIdentityNodes)
+                var rootIdentityNodes = subIdentityNodesProto
+                    .ToDictionary(k => new Node
                     {
-                        foreach (var sub in kvp.Value)
-                        {
-                            edges.Add(new Edge<Node, string>(
-                                    kvp.Key,
-                                    sub,
-                                    "is"));
-                        }
+                        Arn = k.Key,
+                        Type = NodeType.IdentityPrincipal,
+                        Name = k.Key
+                    }, v => v.Value);
+                nodes.AddRange(rootIdentityNodes.Keys);
+
+                foreach (var kvp in rootIdentityNodes)
+                {
+                    foreach (var sub in kvp.Value)
+                    {
+                        edges.Add(new Edge<Node, string>(
+                                kvp.Key,
+                                sub,
+                                "is"));
                     }
                 }
             }

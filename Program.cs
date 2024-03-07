@@ -272,7 +272,7 @@ internal class Program
                         v => GraphSearcher.FindServicesAttachedTo(allEdges, v).Select(s => s.service).ToArray()
                     );
 
-                foreach (var awsAccountId in actualAwsAccountIds)
+                /*TODO: Use this data.  foreach (var awsAccountId in actualAwsAccountIds)
                 {
                     await AwsAccessGraph.AwsPolicies.AwsPolicyLoader.LoadAwsLastAccessedReportsAsync(
                         awsAccessKeyId: awsAccessKeyId,
@@ -285,21 +285,41 @@ internal class Program
                         roleList: accountRoleList[awsAccountId],
                         policyServices: policyServices,
                         cancellationToken: cts.Token);
-                }
+                }*/
 
                 // Dedupe nodes and repair edges.
                 var dedupedNodes = allNodes.Distinct().ToList();
                 if (allNodes.Count != dedupedNodes.Count)
                     Console.WriteLine($"Deduped {allNodes.Count} nodes into {dedupedNodes.Count} nodes.");
                 var dedupedEdges = allEdges.Distinct()
-                    .Select(e => new Edge<Node, string>(
-                        dedupedNodes.Single(d => string.CompareOrdinal(e.Source.Name, d.Name) == 0
-                        && e.Source.Type == d.Type
-                        && string.CompareOrdinal(e.Source.Arn, d.Arn) == 0),
-                        dedupedNodes.Single(d => string.CompareOrdinal(e.Destination.Name, d.Name) == 0
-                        && e.Destination.Type == d.Type
-                        && string.CompareOrdinal(e.Destination.Arn, d.Arn) == 0),
-                        e.EdgeData)).ToList();
+                    .Select(e =>
+                    {
+                        /*if ((e.Source.Type == NodeType.OktaUser || e.Source.Type == NodeType.AwsUser) && opts.NoIdentities)
+                            return default(Edge<Node, string>);
+                        if ((e.Destination.Type == NodeType.OktaUser || e.Destination.Type == NodeType.AwsUser) && opts.NoIdentities)
+                            return default(Edge<Node, string>);
+                        */
+                        var sourceNode = dedupedNodes.SingleOrDefault(d => string.CompareOrdinal(e.Source.Name, d.Name) == 0
+                            && e.Source.Type == d.Type
+                            && string.CompareOrdinal(e.Source.Arn, d.Arn) == 0);
+                        if (sourceNode == default)
+                        {
+                            Console.Error.WriteLine($"WARN: Could not find source node {e.Source.Name}");
+                            //return default(Edge<Node, string>);
+                        }
+                        var destNode = dedupedNodes.Single(d => string.CompareOrdinal(e.Destination.Name, d.Name) == 0
+                                            && e.Destination.Type == d.Type
+                                            && string.CompareOrdinal(e.Destination.Arn, d.Arn) == 0);
+                        if (destNode == default)
+                        {
+                            Console.Error.WriteLine($"WARN: Could not find destination node {e.Destination.Name}");
+                            //return default(Edge<Node, string>);
+                        }
+
+                        return new Edge<Node, string>(sourceNode, destNode, e.EdgeData);
+                    })
+                    .Where(e => !e.Equals(default(Edge<Node, string>)))
+                    .ToList();
                 if (allEdges.Count != dedupedEdges.Count)
                     Console.WriteLine($"Deduped {allEdges.Count} edges into {dedupedEdges.Count} edges.");
 
@@ -343,7 +363,7 @@ internal class Program
                         NodeType.AwsService => $"{n.Name}",
                         NodeType.OktaUser => $"OktaUser:{n.Name}",
                         NodeType.OktaGroup => $"OktaGroup:{n.Name}",
-                        NodeType.Identity => $"ID:{n.Name}",
+                        NodeType.IdentityPrincipal => $"ID:{n.Name}",
                         _ => n.Name,
                     };
                 };
@@ -367,8 +387,11 @@ internal class Program
                         var writer = opts.NoFiles ? Console.Out : sw!;
 
                         await writer.WriteLineAsync($"Report of accesses to {Constants.AwsServicePolicyNames[servicePrefix]} generated on {DateTime.UtcNow:O} for account(s) {actualAwsAccountIds.Aggregate((c, n) => c + "," + n)}.");
-                        foreach (var u in allEdges
-                            .FindUsersAttachedTo(targetService)
+
+                        var reportEdgeList = opts.NoIdentities 
+                            ? allEdges.FindIdentityGroupsAttachedTo(targetService)
+                            : allEdges.FindIdentityPrincipalsAttachedTo(targetService);
+                        foreach (var u in reportEdgeList
                             .GroupBy(u => u.source)
                             .OrderBy(u => u.Key.Name))
                         {

@@ -11,7 +11,7 @@ well as Okta Identity Engine workplace identity constructs (users, groups) to
 help identify what users have access to a given service.  A graph of these
 constructs, where the entities are nodes, and relationships are edges is built
 in memory and used to output a text report.  Optionally, a DGML or Graphviz
-compatable DOT file can be output to allow visual inspection of these
+compatible DOT file can be output to allow visual inspection of these
 relationships.
 
 ## Example usage
@@ -71,8 +71,8 @@ The following is an output of the help screen displaying command line
 arguments:
 
 ```
-AWS Access Graph 1.1.0
-Copyright (C) 2023 Sean McElroy.  All rights reserved.
+AWS Access Graph 1.1.1
+Copyright (C) 2024 Sean McElroy.  All rights reserved.
 
   --aws-profile           If specified, the AWS profile configured by this name in the
                           local environment is used.  This can be used to configure a
@@ -136,8 +136,8 @@ Copyright (C) 2023 Sean McElroy.  All rights reserved.
                           error only.
 
   --no-identity           If specified, graphs will not include individual principals, and
-                           will terminate at the group or role level.  In complex graphs,
-                          this can improve readibility of DGML or DOT files.
+                          will terminate at the group or role level.  In complex graphs,
+                          this can improve readability of DGML or DOT files.
 
   --no-prune              If specified, nodes for services that are not the AwsServicePrefix
                           or that are not part of a direct service-to-identity path are
@@ -166,7 +166,7 @@ granted to a service when a more complex policy actually does not provide for it
 
 ## Licensing
 This software is dual licensed under the terms of the GNU Affero General Public License
-for non-commerical use.  Any commercial use or use of this software or any portion of it
+for non-commercial use.  Any commercial use or use of this software or any portion of it
 in commercial offerings requires a separate proprietary license fom the author.
 
 ## Authors
