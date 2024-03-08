@@ -88,7 +88,8 @@ namespace AwsAccessGraph.OktaPolicies
                     var oktaGroupClient = oktaGroupClientFactory.Value;
                     if (oktaGroupClient == null)
                     {
-                        if (forceRefresh) {
+                        if (forceRefresh)
+                        {
                             Console.Error.WriteLine($"ERROR: Okta cannot be refreshed because no Okta Base URL (domain) was specified.");
                             Environment.Exit((int)Constants.ExitCodes.OktaCredentialsNotSpecified);
                         }
@@ -188,7 +189,7 @@ namespace AwsAccessGraph.OktaPolicies
                         {
                             awsGroupUsers = await JsonSerializer.DeserializeAsync<Dictionary<OktaGroupId, OktaGroupMember[]>>(fs, cancellationToken: cancellationToken);
                         }
-                        Console.Error.WriteLine($"[\u2713] {awsGroupUsers!.Count()} AWS-related groups and {awsGroupUsers!.Sum(x => x.Value.Length)} group members read from cache.");
+                        Console.Error.WriteLine($"[\u2713] {awsGroupUsers!.Count} AWS-related groups and {awsGroupUsers!.Sum(x => x.Value.Length)} group members read from cache.");
                     }
                     catch (Exception ex)
                     {
@@ -199,18 +200,22 @@ namespace AwsAccessGraph.OktaPolicies
 
                 if (awsGroupUsers == null)
                 {
-                    awsGroupUsers = new Dictionary<OktaGroupId, OktaGroupMember[]>();
+                    awsGroupUsers = [];
                     foreach (var group in groupList.Where(g => g.Name!.StartsWith("aws", StringComparison.OrdinalIgnoreCase)))
                     {
                         if (string.IsNullOrWhiteSpace(group.Id))
                             throw new InvalidOperationException($"Group ID is not set on: {group}");
 
-                        var groupUsers = await oktaGroupClientFactory.Value.ListGroupUsers(group.Id, cancellationToken: cancellationToken).ToArrayAsync(cancellationToken);
-                        awsGroupUsers.Add(
-                            group.Id,
-                            groupUsers.Select(gu => new OktaGroupMember(group, gu)).ToArray());
+                        var f = oktaGroupClientFactory.Value;
+                        if (f != null)
+                        {
+                            var groupUsers = await f.ListGroupUsers(group.Id, cancellationToken: cancellationToken).ToArrayAsync(cancellationToken);
+                            awsGroupUsers.Add(
+                                group.Id,
+                                groupUsers.Select(gu => new OktaGroupMember(group, gu)).ToArray());
+                        }
                     }
-                    Console.Error.WriteLine($"[\u2713] {awsGroupUsers.Count()} AWS-related groups and {awsGroupUsers.Sum(x => x.Value.Length)} group members read from Okta API.");
+                    Console.Error.WriteLine($"[\u2713] {awsGroupUsers.Count} AWS-related groups and {awsGroupUsers.Sum(x => x.Value.Length)} group members read from Okta API.");
                     if (!noFiles && awsGroupUsers.Any())
                     {
                         if (!Directory.Exists(outputDirectory))

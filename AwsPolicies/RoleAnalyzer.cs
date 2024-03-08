@@ -49,7 +49,7 @@ namespace AwsAccessGraph.AwsPolicies
                         ? s.Principal
                             .Where(p => string.Compare(p.Key, "AWS", StringComparison.OrdinalIgnoreCase) == 0)
                             .SelectMany(p => p.Value.Where(x => x.EndsWith(":root", StringComparison.OrdinalIgnoreCase)))
-                        : Array.Empty<string>()).Any(),
+                        : []).Any(),
 
                 TrustedEntitiesThatCanAssume =
                     rolesThatCanAssume.Union(federationsThatCanAssume).ToHashSet()

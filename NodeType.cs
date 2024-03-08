@@ -26,6 +26,9 @@ namespace AwsAccessGraph
         AwsUser,
         OktaGroup,
         OktaUser,
-        IdentityPrincipal
+        IdentityPrincipal,
+        AwsPermissionSet,
+        AwsIdentityStoreUser,
+        AwsIdentityStoreGroup,
     }
 }

@@ -15,6 +15,7 @@ aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 using Amazon.IdentityManagement.Model;
+using Amazon.SSOAdmin.Model;
 using AwsAccessGraph.AwsPolicies;
 using AwsAccessGraph.OktaPolicies;
 
@@ -28,13 +29,18 @@ namespace AwsAccessGraph
             IEnumerable<RoleDetail> awsRoles,
             IEnumerable<UserDetail> awsUsers,
             IEnumerable<SAMLProviderListEntry> awsSamlIdPs,
+            IEnumerable<PermissionSet> awsPermissionSets,
+            Dictionary<string, PolicyArn[]> awsPermissionSetManagedPolicies,
+            Dictionary<string, PermissionSetInlinePolicy[]> awsPermissionSetInlinePolicies,
+            List<Amazon.IdentityStore.Model.User> identityStoreUsers,
+            List<Amazon.IdentityStore.Model.Group> identityStoreGroups,
+            List<AccountAssignment> permissionSetAssignments,
             IEnumerable<OktaGroup> oktaGroups,
             IEnumerable<OktaUser> oktaUsers,
             Dictionary<OktaGroupId, OktaGroupMember[]> oktaGroupMembers,
             bool verbose,
             string[] limitToAwsServicePrefixes,
-            bool noPruneUnrelatedNodes,
-            bool noIdentities
+            bool noPruneUnrelatedNodes
         )
         {
             // Analyze policy documents
@@ -52,7 +58,7 @@ namespace AwsAccessGraph
                     policyAnalyses[p.Arn] = currentEntry;
                 };
             }
-            Console.Error.WriteLine($"Analyzing managed policy contents... [\u2713] (count={policyAnalyses.Count})");
+            Console.Error.WriteLine($"Analyzed managed policy contents [\u2713] (count={policyAnalyses.Count})");
 
             // Analyze role assume policy documents
             var roleAnalyses = new Dictionary<RoleArn, RoleAnalyzerResult>();
@@ -65,7 +71,7 @@ namespace AwsAccessGraph
                     roleAnalyses.Add(role.Arn, result);
                 }
             }
-            Console.Error.WriteLine($"Analyzing assume policy document contents... [\u2713] (count={roleAnalyses.Count})");
+            Console.Error.WriteLine($"Analyzed assume policy document contents... [\u2713] (count={roleAnalyses.Count})");
 
             // ######################
             // ### Generate graph ###
@@ -114,6 +120,72 @@ namespace AwsAccessGraph
                 }
                 if (noPruneUnrelatedNodes || ct > 0)
                     nodes.Add(policyNode);
+            }
+
+            // Add permission sets to graph
+            foreach (var ps in awsPermissionSets)
+            {
+                var psNode = new Node
+                {
+                    Name = ps.Name,
+                    Type = NodeType.AwsPermissionSet,
+                    Arn = ps.PermissionSetArn
+                };
+
+                // Add directed edges from this permission set to applicable managed policies.
+                var ct = 0;
+                foreach (var policyArn in awsPermissionSetManagedPolicies.TryGetValue(ps.PermissionSetArn, out string[]? value) ? value : [])
+                {
+                    var managedPolicyNode = nodes.SingleOrDefault(n =>
+                        n.Type.Equals(NodeType.AwsPolicy)
+                        && string.Compare(n.Arn, policyArn, StringComparison.OrdinalIgnoreCase) == 0);
+
+                    if (managedPolicyNode != default)
+                    {
+                        edges.Add(new Edge<Node, string>(psNode, managedPolicyNode, "attachedTo"));
+                        ct++;
+                    }
+                }
+
+                // Add directed edges from this group to applicable inline policies.
+                foreach (var inlinePolicy in awsPermissionSetInlinePolicies.TryGetValue(ps.PermissionSetArn, out PermissionSetInlinePolicy[]? value) ? value : [])
+                {
+                    var inlinePolicyNode = new Node
+                    {
+                        Name = $"{ps.Name}{inlinePolicy.Path}{inlinePolicy.Name}",
+                        Type = NodeType.AwsInlinePolicy,
+                        Arn = $"{ps.Name}{inlinePolicy.Path}{inlinePolicy.Name}",
+                    };
+
+                    var ct2 = 0;
+                    if (!string.IsNullOrWhiteSpace(inlinePolicy.PolicyDocument)) // Permission sets can have empty policies
+                    {
+                        var result = PolicyAnalyzer.Analyze(inlinePolicyNode.Arn, Uri.UnescapeDataString(inlinePolicy.PolicyDocument), awsRoles, limitToAwsServicePrefixes);
+
+                        // Add directed edges from this policy to applicable services.
+                        foreach (var servicePrefix in result.Stanzas.Select(pp => pp.Service).Distinct())
+                        {
+                            var serviceNode = nodes.SingleOrDefault(n =>
+                                n.Type.Equals(NodeType.AwsService)
+                                && string.Compare(n.Arn, servicePrefix, StringComparison.OrdinalIgnoreCase) == 0);
+                            if (serviceNode != default)
+                            {
+                                edges.Add(new Edge<Node, string>(inlinePolicyNode, serviceNode, "references"));
+                                ct2++;
+                            }
+                        }
+                    }
+
+                    if (noPruneUnrelatedNodes || ct2 > 0)
+                    {
+                        nodes.Add(inlinePolicyNode);
+                        edges.Add(new Edge<Node, string>(psNode, inlinePolicyNode, "attachedTo"));
+                        ct++;
+                    }
+                }
+
+                if (noPruneUnrelatedNodes || ct > 0)
+                    nodes.Add(psNode);
             }
 
             // Add groups to graph
@@ -171,6 +243,38 @@ namespace AwsAccessGraph
                     {
                         nodes.Add(inlinePolicyNode);
                         edges.Add(new Edge<Node, string>(groupNode, inlinePolicyNode, "attachedTo"));
+                        ct++;
+                    }
+                }
+
+                if (noPruneUnrelatedNodes || ct > 0)
+                    nodes.Add(groupNode);
+            }
+
+            // Add Identity Store groups to graph
+            foreach (var g in identityStoreGroups)
+            {
+                var groupNode = new Node
+                {
+                    Name = g.DisplayName,
+                    Type = NodeType.AwsIdentityStoreGroup,
+                    Arn = g.GroupId,
+                };
+
+                // Add directed edges from this IS Group to applicable permission sets.
+                var ct = 0;
+                foreach (var psArn in permissionSetAssignments
+                    .Where(psa => psa.PrincipalType == Amazon.SSOAdmin.PrincipalType.GROUP
+                        && psa.PrincipalId == g.GroupId)
+                    .Select(psa => psa.PermissionSetArn))
+                {
+                    var permissionSetNode = nodes.SingleOrDefault(n =>
+                        n.Type.Equals(NodeType.AwsPermissionSet)
+                        && string.Compare(n.Arn, psArn, StringComparison.OrdinalIgnoreCase) == 0);
+
+                    if (permissionSetNode != default)
+                    {
+                        edges.Add(new Edge<Node, string>(groupNode, permissionSetNode, "attachedTo"));
                         ct++;
                     }
                 }
@@ -442,9 +546,9 @@ namespace AwsAccessGraph
                 .Where(u => u.Login != null) // This is necessary b/c user could have been suspended/deactivated yet still assigned.
                 .Select(u => new Node
                 {
-                    Name = u.Login,
+                    Name = u.Login ?? "?",
                     Type = NodeType.OktaUser,
-                    Arn = u.UserId
+                    Arn = u.UserId ?? "?"
                 })
                 .ToArray(); // Required so we can modify the collection in the following statement.
             nodes.AddRange(oktaUserNodes);

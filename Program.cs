@@ -43,7 +43,7 @@ internal class Program
             }
 
             if (!opts.AwsServicePrefix.Contains(',') &&
-                !Constants.AwsServicePolicyNames.ContainsKey(opts.AwsServicePrefix.ToLowerInvariant()))
+                !AwsServicePolicyNames.ContainsKey(opts.AwsServicePrefix.ToLowerInvariant()))
             {
                 Console.Error.WriteLine($"Service {opts.AwsServicePrefix} not specified.  Must be a valid AWS service prefix or a common-delimited list of valid service prefixes");
                 return (int)ExitCodes.InvalidAwsServicePrefix;
@@ -182,7 +182,7 @@ internal class Program
                     }
                     else
                     {
-                        awsAccountIds = Array.Empty<string>();
+                        awsAccountIds = [];
                     }
                 }
                 else
@@ -227,7 +227,7 @@ internal class Program
                 foreach (var awsAccountId in awsAccountIds)
                 {
                     Console.Error.WriteLine($"Processing AWS Account ID {awsAccountId}...");
-                    var (awsGroups, awsPolicies, awsRoles, awsUsers, awsSamlIdPs, actualAwsAccountId) = await AwsAccessGraph.AwsPolicies.AwsPolicyLoader.LoadAwsPolicyAsync(
+                    var (awsGroups, awsPolicies, awsRoles, awsUsers, awsSamlIdPs, permissionSetList, permissionSetManagedPolicies, permissionSetInlinePolicies, identityStoreUsers, identityStoreGroups, permissionSetAssignments, actualAwsAccountId) = await AwsAccessGraph.AwsPolicies.AwsPolicyLoader.LoadAwsPolicyAsync(
                         awsAccessKeyId: awsAccessKeyId,
                         awsSecretAccessKey: awsSecretAccessKey,
                         awsSessionToken: awsSessionToken,
@@ -245,15 +245,20 @@ internal class Program
                         awsRoles,
                         awsUsers,
                         awsSamlIdPs,
+                        permissionSetList,
+                        permissionSetManagedPolicies,
+                        permissionSetInlinePolicies,
+                        identityStoreUsers,
+                        identityStoreGroups,
+                        permissionSetAssignments,
                         oktaGroups,
                         oktaUsers,
                         oktaGroupUsers,
                         opts.Verbose,
                         !opts.AwsServicePrefix.Contains(',')
-                            ? new string[] { opts.AwsServicePrefix }
+                            ? [opts.AwsServicePrefix]
                             : opts.AwsServicePrefix.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries),
-                        opts.NoPrune,
-                        noIdentities: opts.NoIdentities);
+                        opts.NoPrune);
 
                     allNodes.AddRange(nodes);
                     allEdges.AddRange(edges);
@@ -361,6 +366,7 @@ internal class Program
                         NodeType.AwsRole => $"AwsIamRole:{n.Name}{arnSuffix}",
                         NodeType.AwsUser => $"AwsIamUser:{n.Name}{arnSuffix}",
                         NodeType.AwsService => $"{n.Name}",
+                        NodeType.AwsPermissionSet => $"AwsPermissionSet:{n.Name}{arnSuffix}",
                         NodeType.OktaUser => $"OktaUser:{n.Name}",
                         NodeType.OktaGroup => $"OktaGroup:{n.Name}",
                         NodeType.IdentityPrincipal => $"ID:{n.Name}",
@@ -388,7 +394,7 @@ internal class Program
 
                         await writer.WriteLineAsync($"Report of accesses to {Constants.AwsServicePolicyNames[servicePrefix]} generated on {DateTime.UtcNow:O} for account(s) {actualAwsAccountIds.Aggregate((c, n) => c + "," + n)}.");
 
-                        var reportEdgeList = opts.NoIdentities 
+                        var reportEdgeList = opts.NoIdentities
                             ? allEdges.FindIdentityGroupsAttachedTo(targetService)
                             : allEdges.FindIdentityPrincipalsAttachedTo(targetService);
                         foreach (var u in reportEdgeList

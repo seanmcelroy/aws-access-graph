@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0 - 2024-03-07
+
+### Changed
+
+- Migrated to .NET 8.0 framework.
+
 ## 1.1.1 - 2024-03-06
 
 ### Changed

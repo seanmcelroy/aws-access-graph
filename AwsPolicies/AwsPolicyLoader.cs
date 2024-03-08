@@ -14,10 +14,17 @@ You should have received a copy of the GNU Affero General Public License along w
 aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 */
 
+using System.Runtime.Intrinsics.Arm;
 using System.Text.Json;
+using Amazon;
 using Amazon.IdentityManagement;
 using Amazon.IdentityManagement.Model;
+using Amazon.IdentityStore;
+using Amazon.IdentityStore.Model;
 using Amazon.SecurityToken;
+using Amazon.SSOAdmin;
+using Amazon.SSOAdmin.Model;
+using Polly.CircuitBreaker;
 using static AwsAccessGraph.Constants;
 
 namespace AwsAccessGraph.AwsPolicies
@@ -28,12 +35,21 @@ namespace AwsAccessGraph.AwsPolicies
 
         private static AmazonIdentityManagementServiceClient? iamClient = null;
 
+        private static AmazonIdentityStoreClient? identityStoreClient = null;
+        private static AmazonSSOAdminClient? identityCenterClient = null;
+
         public static async Task<(
             List<GroupDetail> groupList,
             List<ManagedPolicyDetail> policyList,
             List<RoleDetail> roleList,
             List<UserDetail> userList,
             List<SAMLProviderListEntry> awsSamlIdPs,
+            List<PermissionSet> permissionSetList,
+            Dictionary<string, PolicyArn[]> permissionSetManagedPolicies,
+            Dictionary<string, PermissionSetInlinePolicy[]> permissionSetInlinePolicies,
+            List<Amazon.IdentityStore.Model.User> identityStoreUsers,
+            List<Amazon.IdentityStore.Model.Group> identityStoreGroups,
+            List<AccountAssignment> permissionSetAssignments,
             string actualAwsAccountId
             )> LoadAwsPolicyAsync(
                 string? awsAccessKeyId,
@@ -88,6 +104,48 @@ namespace AwsAccessGraph.AwsPolicies
                 return iam;
             });
 
+            var identityCenterClientFactory = new Lazy<AmazonSSOAdminClient>(() =>
+            {
+                Console.Error.Write("Getting SSO Admin (Identity Center) client... ");
+
+                if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
+                   || string.IsNullOrWhiteSpace(awsSecretAccessKey))
+                   && string.IsNullOrWhiteSpace(awsSessionToken))
+                {
+                    Console.Error.WriteLine("Error creating SSO Admin (Identity Center) client: AWS credentials were not provided.");
+                    System.Environment.Exit((int)ExitCodes.AwsCredentialsNotSpecified);
+                }
+
+                var identityCenterClient = new AmazonSSOAdminClient(
+                    awsAccessKeyId,
+                    awsSecretAccessKey,
+                    awsSessionToken);
+                Console.Error.WriteLine("[\u2713]");
+
+                return identityCenterClient;
+            });
+
+            var identityStoreClientFactory = new Lazy<AmazonIdentityStoreClient>(() =>
+            {
+                Console.Error.Write("Getting Identity Store client... ");
+
+                if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
+                   || string.IsNullOrWhiteSpace(awsSecretAccessKey))
+                   && string.IsNullOrWhiteSpace(awsSessionToken))
+                {
+                    Console.Error.WriteLine("Error creating Identity Store client: AWS credentials were not provided.");
+                    System.Environment.Exit((int)ExitCodes.AwsCredentialsNotSpecified);
+                }
+
+                var identityStoreClient = new AmazonIdentityStoreClient(
+                    awsAccessKeyId,
+                    awsSecretAccessKey,
+                    awsSessionToken);
+                Console.Error.WriteLine("[\u2713]");
+
+                return identityStoreClient;
+            });
+
             if (string.IsNullOrWhiteSpace(actualAwsAccountId))
             {
                 if (stsClientFactory == null)
@@ -110,89 +168,56 @@ namespace AwsAccessGraph.AwsPolicies
             List<RoleDetail>? roleList = null;
             List<UserDetail>? userList = null;
             List<SAMLProviderListEntry>? samlIdpList = null;
+            List<PermissionSet>? permissionSetList = null;
+            Dictionary<string, PolicyArn[]>? permissionSetManagedPolicies = null;
+            Dictionary<string, PermissionSetInlinePolicy[]>? permissionSetInlinePolicies = null;
+            List<Amazon.IdentityStore.Model.User>? identityStoreUsers = null;
+            List<Amazon.IdentityStore.Model.Group>? identityStoreGroups = null;
+            List<AccountAssignment>? permissionSetAssignments = null;
+
             {
                 Console.Error.WriteLine("Enumerating Account Authorization Details... ");
-                var groupListPath = () => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-group-list.json");
-                var policyListPath = () => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-policy-list.json");
-                var roleListPath = () => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-role-list.json");
-                var userListPath = () => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-user-list.json");
-                var samlIdpListPath = () => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-saml-idp-list.json");
+                string groupListPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-group-list.json");
+                string policyListPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-policy-list.json");
+                string roleListPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-role-list.json");
+                string userListPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-user-list.json");
+                string samlIdpListPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-saml-idp-list.json");
+                string permissionSetListPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-permission-set-list.json");
+                string permissionSetManagedPolicyMapPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-permission-set-managed-policy-map.json");
+                string permissionSetInlinePolicyMapPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-permission-set-inline-policy-map.json");
+                string identityStoreUserListPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-identity-store-user-list.json");
+                string identityStoreGroupListPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-identity-store-group-list.json");
+                string permissionSetAssignmentListPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-permission-set-assignments-list.json");
 
-                if (!forceRefresh
-                   && File.Exists(groupListPath.Invoke())
-                   && (DateTime.UtcNow - File.GetLastWriteTimeUtc(groupListPath.Invoke())).TotalHours < CachedHours)
+                async Task<T?> loadFromCache<T, V>(string path, string collectionName, bool forceRefresh, CancellationToken cancellationToken) where T : ICollection<V>
                 {
-                    try
+                    if (!forceRefresh
+                        && File.Exists(path)
+                        && (DateTime.UtcNow - File.GetLastWriteTimeUtc(path)).TotalHours < CachedHours)
                     {
-                        using (var fs = new FileStream(groupListPath.Invoke(), new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
+                        try
                         {
-                            groupList = await JsonSerializer.DeserializeAsync<List<GroupDetail>>(fs, cancellationToken: cancellationToken);
+                            T? result;
+                            using (var fs = new FileStream(path, new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
+                            {
+                                result = await JsonSerializer.DeserializeAsync<T>(fs, cancellationToken: cancellationToken);
+                            }
+                            Console.Error.WriteLine($"[\u2713] {result!.Count} {collectionName} read from cache.");
+                            return result;
                         }
-                        Console.Error.WriteLine($"[\u2713] {groupList!.Count} groups read from cache.");
+                        catch (Exception ex)
+                        {
+                            Console.Error.WriteLine($"Error reading from AWS {collectionName} cache{Environment.NewLine}Message:{ex.Message}{Environment.NewLine}.  Will try to ready from API.");
+                            return default(T?);
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        Console.Error.WriteLine($"Error reading from AWS group cache{Environment.NewLine}Message:{ex.Message}{Environment.NewLine}, trying API... ");
-                        groupList = null;
-                    }
+                    return default(T?);
                 }
 
-                if (!forceRefresh
-                    && File.Exists(policyListPath.Invoke())
-                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(policyListPath.Invoke())).TotalHours < CachedHours)
-                {
-                    try
-                    {
-                        using (var fs = new FileStream(policyListPath.Invoke(), new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
-                        {
-                            policyList = await JsonSerializer.DeserializeAsync<List<ManagedPolicyDetail>>(fs, cancellationToken: cancellationToken);
-                        }
-                        Console.Error.WriteLine($"[\u2713] {policyList!.Count} policies read from cache.");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.Error.WriteLine($"Error reading from AWS policy cache{Environment.NewLine}Message:{ex.Message}{Environment.NewLine}, trying API... ");
-                        policyList = null;
-                    }
-                }
-
-                if (!forceRefresh
-                    && File.Exists(roleListPath.Invoke())
-                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(roleListPath.Invoke())).TotalHours < CachedHours)
-                {
-                    try
-                    {
-                        using (var fs = new FileStream(roleListPath.Invoke(), new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
-                        {
-                            roleList = await JsonSerializer.DeserializeAsync<List<RoleDetail>>(fs, cancellationToken: cancellationToken);
-                        }
-                        Console.Error.WriteLine($"[\u2713] {roleList!.Count} roles read from cache.");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.Error.WriteLine($"Error reading from AWS roles cache{Environment.NewLine}Message:{ex.Message}{Environment.NewLine}, trying API... ");
-                        roleList = null;
-                    }
-                }
-
-                if (!forceRefresh
-                    && File.Exists(userListPath.Invoke())
-                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(userListPath.Invoke())).TotalHours < CachedHours)
-                {
-                    try
-                    {
-                        using (var fs = new FileStream(userListPath.Invoke(), new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
-                        {
-                            userList = await JsonSerializer.DeserializeAsync<List<UserDetail>>(fs, cancellationToken: cancellationToken);
-                        }
-                        Console.Error.WriteLine($"[\u2713] {userList!.Count} users read from cache.");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.Error.WriteLine($"Error reading from AWS users cache{Environment.NewLine}Message:{ex.Message}{Environment.NewLine}, trying API... ");
-                        userList = null;
-                    }
-                }
+                groupList = await loadFromCache<List<GroupDetail>, GroupDetail>(groupListPath(), "groups", forceRefresh, cancellationToken);
+                policyList = await loadFromCache<List<ManagedPolicyDetail>, ManagedPolicyDetail>(policyListPath(), "policies", forceRefresh, cancellationToken);
+                roleList = await loadFromCache<List<RoleDetail>, RoleDetail>(roleListPath(), "roles", forceRefresh, cancellationToken);
+                userList = await loadFromCache<List<UserDetail>, UserDetail>(userListPath(), "users", forceRefresh, cancellationToken);
 
                 if (groupList == null
                     || policyList == null
@@ -200,13 +225,13 @@ namespace AwsAccessGraph.AwsPolicies
                     || userList == null)
                 {
                     // None of this was read from cache, so read fresh if we can.
-                    groupList ??= new List<GroupDetail>();
-                    policyList ??= new List<ManagedPolicyDetail>();
-                    roleList ??= new List<RoleDetail>();
-                    userList ??= new List<UserDetail>();
+                    groupList ??= [];
+                    policyList ??= [];
+                    roleList ??= [];
+                    userList ??= [];
                     var more = false;
                     string? marker = null;
-                    iamClient = iamClient ?? iamClientFactory.Value;
+                    iamClient ??= iamClientFactory.Value;
 
                     do
                     {
@@ -227,60 +252,242 @@ namespace AwsAccessGraph.AwsPolicies
                     } while (more && !cancellationToken.IsCancellationRequested);
                     Console.Error.WriteLine($"[\u2713] {groupList.Count} groups, {policyList.Count} policies, {roleList.Count} roles, {userList.Count} users read from AWS API.");
                     if (!noFiles
-                        && (groupList.Any() || policyList.Any() || roleList.Any() || userList.Any()))
+                        && (groupList.Count != 0 || policyList.Count != 0 || roleList.Count != 0 || userList.Count != 0))
                     {
                         if (!Directory.Exists(outputDirectory))
                             Directory.CreateDirectory(outputDirectory);
 
-                        await File.WriteAllTextAsync(groupListPath.Invoke(), JsonSerializer.Serialize(groupList), cancellationToken);
-                        await File.WriteAllTextAsync(policyListPath.Invoke(), JsonSerializer.Serialize(policyList), cancellationToken);
-                        await File.WriteAllTextAsync(roleListPath.Invoke(), JsonSerializer.Serialize(roleList), cancellationToken);
-                        await File.WriteAllTextAsync(userListPath.Invoke(), JsonSerializer.Serialize(userList), cancellationToken);
+                        await File.WriteAllTextAsync(groupListPath(), JsonSerializer.Serialize(groupList), cancellationToken);
+                        await File.WriteAllTextAsync(policyListPath(), JsonSerializer.Serialize(policyList), cancellationToken);
+                        await File.WriteAllTextAsync(roleListPath(), JsonSerializer.Serialize(roleList), cancellationToken);
+                        await File.WriteAllTextAsync(userListPath(), JsonSerializer.Serialize(userList), cancellationToken);
                     }
                 }
 
                 // SAML providers, separate call.
-                if (!forceRefresh
-                    && File.Exists(samlIdpListPath.Invoke())
-                    && (DateTime.UtcNow - File.GetLastWriteTimeUtc(samlIdpListPath.Invoke())).TotalHours < CachedHours)
-                {
-                    try
-                    {
-                        using (var fs = new FileStream(samlIdpListPath.Invoke(), new FileStreamOptions { Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read, Options = FileOptions.Asynchronous }))
-                        {
-                            samlIdpList = await JsonSerializer.DeserializeAsync<List<SAMLProviderListEntry>>(fs, cancellationToken: cancellationToken);
-                        }
-                        Console.Error.WriteLine($"[\u2713] {samlIdpList!.Count} SAML providers read from cache.");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.Error.WriteLine($"Error reading from AWS SAML IdP cache{Environment.NewLine}Message:{ex.Message}{Environment.NewLine}, trying API... ");
-                        userList = null;
-                    }
-                }
-
+                samlIdpList = await loadFromCache<List<SAMLProviderListEntry>, SAMLProviderListEntry>(samlIdpListPath(), "SAML providers", forceRefresh, cancellationToken);
                 if (samlIdpList == null)
                 {
                     // None of this was read from cache, so read fresh if we can.
-                    samlIdpList ??= new List<SAMLProviderListEntry>();
-                    iamClient = iamClient ?? iamClientFactory.Value;
+                    samlIdpList ??= [];
+                    iamClient ??= iamClientFactory.Value;
                     var response = await iamClient.ListSAMLProvidersAsync(new ListSAMLProvidersRequest(), cancellationToken);
                     samlIdpList.AddRange(response.SAMLProviderList);
 
                     Console.Error.WriteLine($"[\u2713] {samlIdpList.Count} SAML providers read from AWS API.");
-                    if (!noFiles && samlIdpList.Any())
+                    if (!noFiles && samlIdpList.Count != 0)
                     {
                         if (!Directory.Exists(outputDirectory))
                             Directory.CreateDirectory(outputDirectory);
-                        await File.WriteAllTextAsync(samlIdpListPath.Invoke(), JsonSerializer.Serialize(samlIdpList), cancellationToken);
+                        await File.WriteAllTextAsync(samlIdpListPath(), JsonSerializer.Serialize(samlIdpList), cancellationToken);
                     }
+                }
+
+                // Identity Center objects, separate set of calls.
+                permissionSetList = await loadFromCache<List<PermissionSet>, PermissionSet>(permissionSetListPath(), "permission sets", forceRefresh, cancellationToken);
+                permissionSetManagedPolicies = await loadFromCache<Dictionary<string, PolicyArn[]>, KeyValuePair<string, PolicyArn[]>>(permissionSetManagedPolicyMapPath(), "permission set managed policies", forceRefresh, cancellationToken);
+                permissionSetInlinePolicies = await loadFromCache<Dictionary<string, PermissionSetInlinePolicy[]>, KeyValuePair<string, PermissionSetInlinePolicy[]>>(permissionSetInlinePolicyMapPath(), "permission set inline policies", forceRefresh, cancellationToken);
+                identityStoreUsers = await loadFromCache<List<Amazon.IdentityStore.Model.User>, Amazon.IdentityStore.Model.User>(identityStoreUserListPath(), "identity store users", forceRefresh, cancellationToken);
+                identityStoreGroups = await loadFromCache<List<Amazon.IdentityStore.Model.Group>, Amazon.IdentityStore.Model.Group>(identityStoreGroupListPath(), "identity store groups", forceRefresh, cancellationToken);
+                permissionSetAssignments = await loadFromCache<List<AccountAssignment>, AccountAssignment>(permissionSetAssignmentListPath(), "permission set assignments", forceRefresh, cancellationToken);
+
+                if (permissionSetList == null
+                    || permissionSetManagedPolicies == null
+                    || permissionSetInlinePolicies == null
+                    || identityStoreUsers == null
+                    || identityStoreGroups == null
+                    || permissionSetAssignments == null)
+                {
+                    identityCenterClient ??= identityCenterClientFactory.Value;
+                    identityStoreClient ??= identityStoreClientFactory.Value;
+
+                    var icInstancesResponse = await identityCenterClient.ListInstancesAsync(new ListInstancesRequest(), cancellationToken);
+                    if (icInstancesResponse.Instances.Count == 0)
+                    {
+                        // There is no Identity Center.
+                    }
+                    else
+                    {
+                        foreach (var ici in icInstancesResponse.Instances)
+                        {
+                            Console.Error.WriteLine($"Identity Center {ici.InstanceArn} located in {actualAwsAccountId} (owner={ici.OwnerAccountId}).  This will take a moment..");
+                            try
+                            {
+                                var more = false;
+                                string? nextToken = null;
+                                do
+                                {
+                                    var idsUserResponse = await identityStoreClient.ListUsersAsync(new Amazon.IdentityStore.Model.ListUsersRequest
+                                    {
+                                        IdentityStoreId = ici.IdentityStoreId,
+                                        NextToken = nextToken
+                                    }, cancellationToken);
+
+                                    more = idsUserResponse.NextToken != null;
+                                    nextToken = idsUserResponse.NextToken;
+                                    identityStoreUsers ??= [];
+                                    identityStoreUsers.AddRange(idsUserResponse.Users);
+                                } while (more && !cancellationToken.IsCancellationRequested);
+                                Console.Error.WriteLine($"\t[\u2713] {identityStoreUsers.Count} users retrieved for identity store {ici.IdentityStoreId}.");
+
+                                more = false;
+                                nextToken = null;
+                                do
+                                {
+                                    var idsGroupResponse = await identityStoreClient.ListGroupsAsync(new Amazon.IdentityStore.Model.ListGroupsRequest
+                                    {
+                                        IdentityStoreId = ici.IdentityStoreId,
+                                        NextToken = nextToken
+                                    }, cancellationToken);
+
+                                    more = idsGroupResponse.NextToken != null;
+                                    nextToken = idsGroupResponse.NextToken;
+                                    identityStoreGroups ??= [];
+                                    identityStoreGroups.AddRange(idsGroupResponse.Groups);
+                                } while (more && !cancellationToken.IsCancellationRequested);
+                                Console.Error.WriteLine($"\t[\u2713] {identityStoreGroups.Count} groups retrieved for identity store {ici.IdentityStoreId}.");
+
+                                more = false;
+                                nextToken = null;
+                                var permissionSetArns = new List<string>();
+                                do
+                                {
+                                    var lpResponse = await identityCenterClient.ListPermissionSetsAsync(new ListPermissionSetsRequest
+                                    {
+                                        InstanceArn = ici.InstanceArn,
+                                        NextToken = nextToken
+                                    }, cancellationToken);
+
+                                    more = lpResponse.NextToken != null;
+                                    nextToken = lpResponse.NextToken;
+                                    permissionSetArns.AddRange(lpResponse.PermissionSets);
+                                } while (more && !cancellationToken.IsCancellationRequested);
+                                Console.Error.WriteLine($"\t[\u2713] {permissionSetArns.Count} permission sets read from AWS API, getting details of each now...");
+
+                                foreach (var psArn in permissionSetArns)
+                                {
+                                    var pResponse = await identityCenterClient.DescribePermissionSetAsync(new DescribePermissionSetRequest
+                                    {
+                                        PermissionSetArn = psArn,
+                                        InstanceArn = ici.InstanceArn
+                                    }, cancellationToken);
+                                    permissionSetList ??= [];
+                                    permissionSetList.Add(pResponse.PermissionSet);
+
+                                    // Managed policies attached to a permission set
+                                    more = false;
+                                    nextToken = null;
+                                    do
+                                    {
+                                        var managedPoliciesResponse = await identityCenterClient.ListManagedPoliciesInPermissionSetAsync(new ListManagedPoliciesInPermissionSetRequest
+                                        {
+                                            InstanceArn = ici.InstanceArn,
+                                            PermissionSetArn = psArn,
+                                            NextToken = nextToken
+                                        }, cancellationToken);
+
+                                        more = managedPoliciesResponse.NextToken != null;
+                                        nextToken = managedPoliciesResponse.NextToken;
+                                        permissionSetManagedPolicies ??= [];
+                                        permissionSetManagedPolicies.Add(
+                                            psArn,
+                                            managedPoliciesResponse.AttachedManagedPolicies.Select(m => m.Arn).ToArray()
+                                        );
+                                    } while (more && !cancellationToken.IsCancellationRequested);
+
+                                    // Inline policies attached to a permission set
+                                    more = false;
+                                    nextToken = null;
+                                    List<PermissionSetInlinePolicy> inlinePolicies = [];
+                                    do
+                                    {
+                                        var customerPoliciesResponse = await identityCenterClient.ListCustomerManagedPolicyReferencesInPermissionSetAsync(new ListCustomerManagedPolicyReferencesInPermissionSetRequest
+                                        {
+                                            InstanceArn = ici.InstanceArn,
+                                            PermissionSetArn = psArn,
+                                            NextToken = nextToken
+                                        }, cancellationToken);
+
+                                        more = customerPoliciesResponse.NextToken != null;
+                                        nextToken = customerPoliciesResponse.NextToken;
+                                        permissionSetInlinePolicies ??= [];
+                                        foreach (var ip in customerPoliciesResponse.CustomerManagedPolicyReferences)
+                                        {
+                                            var policyDocument = await identityCenterClient.GetInlinePolicyForPermissionSetAsync(new GetInlinePolicyForPermissionSetRequest
+                                            {
+                                                InstanceArn = ici.InstanceArn,
+                                                PermissionSetArn = psArn
+                                            }, cancellationToken);
+
+                                            inlinePolicies.Add(new PermissionSetInlinePolicy
+                                            {
+                                                Name = ip.Name,
+                                                Path = ip.Path,
+                                                PolicyDocument = policyDocument.InlinePolicy
+                                            });
+                                        }
+
+                                        if (permissionSetInlinePolicies.TryGetValue(psArn, out PermissionSetInlinePolicy[]? inlinePoliciesExisting))
+                                        {
+                                            var z = new PermissionSetInlinePolicy[inlinePoliciesExisting.Length + inlinePolicies.Count];
+                                            inlinePoliciesExisting.CopyTo(z, 0);
+                                            inlinePolicies.CopyTo(z, inlinePoliciesExisting.Length);
+                                            permissionSetInlinePolicies[psArn] = z;
+                                        }
+                                        else
+                                            permissionSetInlinePolicies.Add(psArn, [.. inlinePolicies]);
+                                    } while (more && !cancellationToken.IsCancellationRequested);
+
+                                    // Now read permission set assignments.
+                                    more = false;
+                                    nextToken = null;
+                                    do
+                                    {
+                                        var icAccountAssignmentsResponse = await identityCenterClient.ListAccountAssignmentsAsync(new ListAccountAssignmentsRequest
+                                        {
+                                            AccountId = awsAccountId,
+                                            InstanceArn = ici.InstanceArn,
+                                            PermissionSetArn = psArn,
+                                            NextToken = nextToken
+                                        }, cancellationToken);
+
+                                        more = icAccountAssignmentsResponse.NextToken != null;
+                                        nextToken = icAccountAssignmentsResponse.NextToken;
+                                        permissionSetAssignments ??= [];
+                                        permissionSetAssignments.AddRange(icAccountAssignmentsResponse.AccountAssignments);
+                                    } while (more && !cancellationToken.IsCancellationRequested);
+                                }
+                            }
+                            catch (Amazon.SSOAdmin.Model.AccessDeniedException ade)
+                            {
+                                Console.Error.WriteLine($"[X] ERROR reading permission sets read from AWS API for Identity Center {ici.InstanceArn}: {ade.Message}");
+                            }
+
+                            Console.Error.WriteLine($"\t[\u2713] {(permissionSetList == null ? 0 : permissionSetList.Count)} permission sets, {(permissionSetManagedPolicies == null ? 0 : permissionSetManagedPolicies.SelectMany(p => p.Value).Count())} managed policy references, {(permissionSetInlinePolicies == null ? 0 : permissionSetInlinePolicies.SelectMany(p => p.Value).Count())} inline policy references, and {(permissionSetAssignments == null ? 0 : permissionSetAssignments.Count())} assignments read from AWS API.");
+                        }
+
+                        if (!noFiles)
+                        {
+                            if (!Directory.Exists(outputDirectory))
+                                Directory.CreateDirectory(outputDirectory);
+
+                            await File.WriteAllTextAsync(permissionSetListPath(), JsonSerializer.Serialize(permissionSetList ?? []), cancellationToken);
+                            await File.WriteAllTextAsync(permissionSetManagedPolicyMapPath(), JsonSerializer.Serialize(permissionSetManagedPolicies ?? []), cancellationToken);
+                            await File.WriteAllTextAsync(permissionSetInlinePolicyMapPath(), JsonSerializer.Serialize(permissionSetInlinePolicies ?? []), cancellationToken);
+                            await File.WriteAllTextAsync(identityStoreUserListPath(), JsonSerializer.Serialize(identityStoreUsers ?? []), cancellationToken);
+                            await File.WriteAllTextAsync(identityStoreGroupListPath(), JsonSerializer.Serialize(identityStoreGroups ?? []), cancellationToken);
+                            await File.WriteAllTextAsync(permissionSetAssignmentListPath(), JsonSerializer.Serialize(permissionSetAssignments ?? []), cancellationToken);
+                        }
+                    }
+
+
                 }
 
                 // However, we will prune our memory copy to only care about policies with attachments.
                 //policyList = policyList.Where(p => p.AttachmentCount > 0).ToList();
             }
 
-            return (groupList!, policyList!, roleList!, userList!, samlIdpList!, actualAwsAccountId!);
+            return (groupList!, policyList!, roleList!, userList!, samlIdpList!, permissionSetList!, permissionSetManagedPolicies!, permissionSetInlinePolicies!, identityStoreUsers!, identityStoreGroups!, permissionSetAssignments!, actualAwsAccountId!);
         }
 
         public static async Task<
@@ -339,7 +546,7 @@ namespace AwsAccessGraph.AwsPolicies
                 }
             }
 
-            Dictionary<string, EntityDetails[]> roleEntityDetailList = new();
+            Dictionary<string, EntityDetails[]> roleEntityDetailList = [];
 
             while (roleJobIds.Count > 0)
             {
@@ -347,7 +554,7 @@ namespace AwsAccessGraph.AwsPolicies
                 var roleActionDetailsPath = Path.Combine(outputDirectory, $"aws-{awsAccountId}-role-{nextRole.RoleId}-service-last-action-report.json");
                 var more = false;
                 string? marker = null;
-                iamClient = iamClient ?? iamClientFactory.Value;
+                iamClient ??= iamClientFactory.Value;
 
                 var entitiesDetailsList = new List<EntityDetails>();
                 do
@@ -380,7 +587,7 @@ namespace AwsAccessGraph.AwsPolicies
 
                 } while (more && !cancellationToken.IsCancellationRequested);
 
-                roleEntityDetailList.Add(nextRole.RoleId, entitiesDetailsList.ToArray());
+                roleEntityDetailList.Add(nextRole.RoleId, [.. entitiesDetailsList]);
                 roleJobIds.Dequeue();
             }
 

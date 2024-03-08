@@ -36,7 +36,7 @@ Getting Okta group API client... [✓] 197 groups read from Okta API.
 Getting Okta user API client... [✓] 217 users read from Okta API.
 [✓] 55 AWS-related groups and 636 group members read from Okta API.
 Analyzing managed policy contents... 
-Analyzing managed policy contents... [✓] (count=298)
+Analyzing managed policy contents [✓] (count=298)
 Analyzing assume role policy document contents... 
 Analyzing assume policy document contents... [✓] (count=232)
 
@@ -167,7 +167,7 @@ granted to a service when a more complex policy actually does not provide for it
 ## Licensing
 This software is dual licensed under the terms of the GNU Affero General Public License
 for non-commercial use.  Any commercial use or use of this software or any portion of it
-in commercial offerings requires a separate proprietary license fom the author.
+in commercial offerings requires a separate proprietary license from the author.
 
 ## Authors
 To contact the author, email Sean McElroy at me@seanmcelroy.com.

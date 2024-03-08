@@ -36,6 +36,7 @@ namespace AwsAccessGraph.Graphviz
                     NodeType.AwsGroup => $"AWS Group {n.Name}",
                     NodeType.AwsRole => $"AWS Role {n.Name}",
                     NodeType.AwsUser => $"AWS IAM User {n.Name}",
+                    NodeType.AwsPermissionSet => $"AWS Permission Set {n.Name}",
                     NodeType.OktaGroup => $"Okta Group {n.Name}",
                     NodeType.OktaUser => $"Okta User {n.Name}",
                     _ => n.Name
