@@ -15,6 +15,7 @@ aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 using Amazon.IdentityManagement.Model;
+using Amazon.IdentityStore.Model;
 using Amazon.SSOAdmin.Model;
 using AwsAccessGraph.AwsPolicies;
 using AwsAccessGraph.OktaPolicies;
@@ -34,6 +35,7 @@ namespace AwsAccessGraph
             Dictionary<string, PermissionSetInlinePolicy[]> awsPermissionSetInlinePolicies,
             List<Amazon.IdentityStore.Model.User> identityStoreUsers,
             List<Amazon.IdentityStore.Model.Group> identityStoreGroups,
+            Dictionary<string, GroupMembership[]> identityStoreGroupMemberships,
             List<AccountAssignment> permissionSetAssignments,
             IEnumerable<OktaGroup> oktaGroups,
             IEnumerable<OktaUser> oktaUsers,
@@ -423,6 +425,35 @@ namespace AwsAccessGraph
                     nodes.Add(userNode);
             }
 
+            // Add Identity Store users to graph
+            foreach (var u in identityStoreUsers)
+            {
+                var userNode = new Node
+                {
+                    Name = u.UserName,
+                    Type = NodeType.AwsIdentityStoreUser,
+                    Arn = u.UserId,
+                };
+
+                // Add directed edges from this user to groups in which the user is a member
+                var ct = 0;
+                foreach (var groupName in identityStoreGroupMemberships.Keys)
+                {
+                    var groupNode = nodes.SingleOrDefault(n =>
+                        n.Type.Equals(NodeType.AwsIdentityStoreGroup)
+                        && string.Compare(n.Name, groupName, StringComparison.OrdinalIgnoreCase) == 0);
+
+                    if (groupNode != default)
+                    {
+                        edges.Add(new Edge<Node, string>(userNode, groupNode, "memberOf"));
+                        ct++;
+                    }
+                }
+
+                if (noPruneUnrelatedNodes || ct > 0)
+                    nodes.Add(userNode);
+            }
+
             // Add policy(attachedTo)role(targeting)role assumption edges to graph
             var roleNodes = nodes.Where(n => n.Type.Equals(NodeType.AwsRole)).ToLookup(r => r.Arn);
             {
@@ -570,13 +601,48 @@ namespace AwsAccessGraph
                 }
             }
 
-            // Finally, group AwsIamUser and OktaUsers
+            // Add applicable Identity Store users and related edges to graph
+            var identityStoreUserNodes = nodes
+                .Where(n => n.Type.Equals(NodeType.AwsIdentityStoreGroup))
+                .SelectMany(n => identityStoreGroupMemberships[n.Arn!])
+                .Select(n => n.MemberId.UserId)
+                .Distinct()
+                .Select(u => identityStoreUsers.SingleOrDefault(isu => string.Compare(isu.UserId, u, StringComparison.OrdinalIgnoreCase) == 0))
+                .Where(u => u != null)
+                .Select(u => new Node
+                {
+                    Name = u!.UserName ?? "?",
+                    Type = NodeType.AwsIdentityStoreUser,
+                    Arn = u.UserId ?? "?"
+                })
+                .ToArray(); // Required so we can modify the collection in the following statement.
+            nodes.AddRange(identityStoreUserNodes);
+
+            // Now the Identity Store user-group edges.
+            {
+                var isuLookup = identityStoreUserNodes.ToLookup(isu => isu.Arn);
+                foreach (var identityStoreGroupNode in nodes.Where(n => n.Type.Equals(NodeType.AwsIdentityStoreGroup)))
+                {
+                    edges.AddRange(identityStoreGroupMemberships[identityStoreGroupNode.Arn!]
+                        .Select(gm => (gm.MemberId, isuLookup[gm.MemberId.UserId].SingleOrDefault()))
+                        .Where(t => t.Item2 != default)
+                        .Select(gm => new Edge<Node, string>(
+                            gm.Item2,
+                            identityStoreGroupNode,
+                            "memberOf"
+                        )));
+                }
+            }
+
+            // Finally, group AwsIamUser, OktaUsers, and IdentityStoreUsers
             {
                 var awsUserNodes = nodes
                     .Where(n => n.Type.Equals(NodeType.AwsUser))
                     .ToArray();
 
-                var subIdentityNodesProto = oktaUserNodes.Union(awsUserNodes)
+                var subIdentityNodesProto = oktaUserNodes
+                    .Union(awsUserNodes)
+                    .Union(identityStoreUserNodes)
                     .GroupBy(x => x.Name.Split('@')[0])
                     .ToDictionary(k => k.Key, v => v.ToArray());
 

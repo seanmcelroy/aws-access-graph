@@ -49,6 +49,7 @@ namespace AwsAccessGraph.AwsPolicies
             Dictionary<string, PermissionSetInlinePolicy[]> permissionSetInlinePolicies,
             List<Amazon.IdentityStore.Model.User> identityStoreUsers,
             List<Amazon.IdentityStore.Model.Group> identityStoreGroups,
+            Dictionary<string, GroupMembership[]> identityStoreGroupMemberships,
             List<AccountAssignment> permissionSetAssignments,
             string actualAwsAccountId
             )> LoadAwsPolicyAsync(
@@ -173,6 +174,7 @@ namespace AwsAccessGraph.AwsPolicies
             Dictionary<string, PermissionSetInlinePolicy[]>? permissionSetInlinePolicies = null;
             List<Amazon.IdentityStore.Model.User>? identityStoreUsers = null;
             List<Amazon.IdentityStore.Model.Group>? identityStoreGroups = null;
+            Dictionary<string, GroupMembership[]>? identityStoreGroupMemberships = null;
             List<AccountAssignment>? permissionSetAssignments = null;
 
             {
@@ -187,6 +189,7 @@ namespace AwsAccessGraph.AwsPolicies
                 string permissionSetInlinePolicyMapPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-permission-set-inline-policy-map.json");
                 string identityStoreUserListPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-identity-store-user-list.json");
                 string identityStoreGroupListPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-identity-store-group-list.json");
+                string identityStoreGroupMembershipMapPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-identity-store-group-members-map.json");
                 string permissionSetAssignmentListPath() => Path.Combine(outputDirectory, $"aws-{actualAwsAccountId}-permission-set-assignments-list.json");
 
                 async Task<T?> loadFromCache<T, V>(string path, string collectionName, bool forceRefresh, CancellationToken cancellationToken) where T : ICollection<V>
@@ -289,6 +292,7 @@ namespace AwsAccessGraph.AwsPolicies
                 permissionSetInlinePolicies = await loadFromCache<Dictionary<string, PermissionSetInlinePolicy[]>, KeyValuePair<string, PermissionSetInlinePolicy[]>>(permissionSetInlinePolicyMapPath(), "permission set inline policies", forceRefresh, cancellationToken);
                 identityStoreUsers = await loadFromCache<List<Amazon.IdentityStore.Model.User>, Amazon.IdentityStore.Model.User>(identityStoreUserListPath(), "identity store users", forceRefresh, cancellationToken);
                 identityStoreGroups = await loadFromCache<List<Amazon.IdentityStore.Model.Group>, Amazon.IdentityStore.Model.Group>(identityStoreGroupListPath(), "identity store groups", forceRefresh, cancellationToken);
+                identityStoreGroupMemberships = await loadFromCache<Dictionary<string, Amazon.IdentityStore.Model.GroupMembership[]>, KeyValuePair<string, Amazon.IdentityStore.Model.GroupMembership[]>>(identityStoreGroupMembershipMapPath(), "identity store group members", forceRefresh, cancellationToken);
                 permissionSetAssignments = await loadFromCache<List<AccountAssignment>, AccountAssignment>(permissionSetAssignmentListPath(), "permission set assignments", forceRefresh, cancellationToken);
 
                 if (permissionSetList == null
@@ -296,6 +300,7 @@ namespace AwsAccessGraph.AwsPolicies
                     || permissionSetInlinePolicies == null
                     || identityStoreUsers == null
                     || identityStoreGroups == null
+                    || identityStoreGroupMemberships == null
                     || permissionSetAssignments == null)
                 {
                     identityCenterClient ??= identityCenterClientFactory.Value;
@@ -313,6 +318,7 @@ namespace AwsAccessGraph.AwsPolicies
                             Console.Error.WriteLine($"Identity Center {ici.InstanceArn} located in {actualAwsAccountId} (owner={ici.OwnerAccountId}).  This will take a moment..");
                             try
                             {
+                                // Users
                                 var more = false;
                                 string? nextToken = null;
                                 do
@@ -330,6 +336,7 @@ namespace AwsAccessGraph.AwsPolicies
                                 } while (more && !cancellationToken.IsCancellationRequested);
                                 Console.Error.WriteLine($"\t[\u2713] {identityStoreUsers.Count} users retrieved for identity store {ici.IdentityStoreId}.");
 
+                                // Groups
                                 more = false;
                                 nextToken = null;
                                 do
@@ -347,6 +354,41 @@ namespace AwsAccessGraph.AwsPolicies
                                 } while (more && !cancellationToken.IsCancellationRequested);
                                 Console.Error.WriteLine($"\t[\u2713] {identityStoreGroups.Count} groups retrieved for identity store {ici.IdentityStoreId}.");
 
+                                // Group Memberships
+                                foreach (var g in identityStoreGroups)
+                                {
+                                    more = false;
+                                    nextToken = null;
+
+                                    do
+                                    {
+                                        var groupMembershipsResponse = await identityStoreClient.ListGroupMembershipsAsync(new ListGroupMembershipsRequest
+                                        {
+                                            IdentityStoreId = ici.IdentityStoreId,
+                                            GroupId = g.GroupId,
+                                            NextToken = nextToken
+                                        }, cancellationToken);
+
+                                        more = groupMembershipsResponse.NextToken != null;
+                                        nextToken = groupMembershipsResponse.NextToken;
+
+                                        var members = groupMembershipsResponse.GroupMemberships;
+                                        identityStoreGroupMemberships ??= [];
+                                        if (identityStoreGroupMemberships.TryGetValue(g.GroupId, out GroupMembership[]? membersExisting))
+                                        {
+                                            var z = new GroupMembership[membersExisting.Length + members.Count];
+                                            membersExisting.CopyTo(z, 0);
+                                            members.CopyTo(z, membersExisting.Length);
+                                            identityStoreGroupMemberships[g.GroupId] = z;
+                                        }
+                                        else
+                                            identityStoreGroupMemberships.Add(g.GroupId, [.. members]);
+
+                                    } while (more && !cancellationToken.IsCancellationRequested);
+
+                                }
+
+                                // Permission Sets
                                 more = false;
                                 nextToken = null;
                                 var permissionSetArns = new List<string>();
@@ -389,10 +431,17 @@ namespace AwsAccessGraph.AwsPolicies
                                         more = managedPoliciesResponse.NextToken != null;
                                         nextToken = managedPoliciesResponse.NextToken;
                                         permissionSetManagedPolicies ??= [];
-                                        permissionSetManagedPolicies.Add(
-                                            psArn,
-                                            managedPoliciesResponse.AttachedManagedPolicies.Select(m => m.Arn).ToArray()
-                                        );
+                                        var managedPolicies = managedPoliciesResponse.AttachedManagedPolicies.Select(m => m.Arn).ToList();
+                                        if (permissionSetManagedPolicies.TryGetValue(psArn, out string[]? managedPoliciesExisting))
+                                        {
+                                            var z = new string[managedPoliciesExisting.Length + managedPolicies.Count];
+                                            managedPoliciesExisting.CopyTo(z, 0);
+                                            managedPolicies.CopyTo(z, managedPoliciesExisting.Length);
+                                            permissionSetManagedPolicies[psArn] = z;
+                                        }
+                                        else
+                                            permissionSetManagedPolicies.Add(psArn, [.. managedPolicies]);
+
                                     } while (more && !cancellationToken.IsCancellationRequested);
 
                                     // Inline policies attached to a permission set
@@ -476,18 +525,17 @@ namespace AwsAccessGraph.AwsPolicies
                             await File.WriteAllTextAsync(permissionSetInlinePolicyMapPath(), JsonSerializer.Serialize(permissionSetInlinePolicies ?? []), cancellationToken);
                             await File.WriteAllTextAsync(identityStoreUserListPath(), JsonSerializer.Serialize(identityStoreUsers ?? []), cancellationToken);
                             await File.WriteAllTextAsync(identityStoreGroupListPath(), JsonSerializer.Serialize(identityStoreGroups ?? []), cancellationToken);
+                            await File.WriteAllTextAsync(identityStoreGroupMembershipMapPath(), JsonSerializer.Serialize(identityStoreGroupMemberships ?? []), cancellationToken);
                             await File.WriteAllTextAsync(permissionSetAssignmentListPath(), JsonSerializer.Serialize(permissionSetAssignments ?? []), cancellationToken);
                         }
                     }
-
-
                 }
 
                 // However, we will prune our memory copy to only care about policies with attachments.
                 //policyList = policyList.Where(p => p.AttachmentCount > 0).ToList();
             }
 
-            return (groupList!, policyList!, roleList!, userList!, samlIdpList!, permissionSetList!, permissionSetManagedPolicies!, permissionSetInlinePolicies!, identityStoreUsers!, identityStoreGroups!, permissionSetAssignments!, actualAwsAccountId!);
+            return (groupList!, policyList!, roleList!, userList!, samlIdpList!, permissionSetList!, permissionSetManagedPolicies!, permissionSetInlinePolicies!, identityStoreUsers!, identityStoreGroups!, identityStoreGroupMemberships!, permissionSetAssignments!, actualAwsAccountId!);
         }
 
         public static async Task<

@@ -227,7 +227,7 @@ internal class Program
                 foreach (var awsAccountId in awsAccountIds)
                 {
                     Console.Error.WriteLine($"Processing AWS Account ID {awsAccountId}...");
-                    var (awsGroups, awsPolicies, awsRoles, awsUsers, awsSamlIdPs, permissionSetList, permissionSetManagedPolicies, permissionSetInlinePolicies, identityStoreUsers, identityStoreGroups, permissionSetAssignments, actualAwsAccountId) = await AwsAccessGraph.AwsPolicies.AwsPolicyLoader.LoadAwsPolicyAsync(
+                    var (awsGroups, awsPolicies, awsRoles, awsUsers, awsSamlIdPs, permissionSetList, permissionSetManagedPolicies, permissionSetInlinePolicies, identityStoreUsers, identityStoreGroups, identityStoreGroupMemberships, permissionSetAssignments, actualAwsAccountId) = await AwsAccessGraph.AwsPolicies.AwsPolicyLoader.LoadAwsPolicyAsync(
                         awsAccessKeyId: awsAccessKeyId,
                         awsSecretAccessKey: awsSecretAccessKey,
                         awsSessionToken: awsSessionToken,
@@ -250,6 +250,7 @@ internal class Program
                         permissionSetInlinePolicies,
                         identityStoreUsers,
                         identityStoreGroups,
+                        identityStoreGroupMemberships,
                         permissionSetAssignments,
                         oktaGroups,
                         oktaUsers,
@@ -369,6 +370,8 @@ internal class Program
                         NodeType.AwsPermissionSet => $"AwsPermissionSet:{n.Name}{arnSuffix}",
                         NodeType.OktaUser => $"OktaUser:{n.Name}",
                         NodeType.OktaGroup => $"OktaGroup:{n.Name}",
+                        NodeType.AwsIdentityStoreUser => $"IdentityStoreUser:{n.Name}",
+                        NodeType.AwsIdentityStoreGroup => $"IdentityStoreGroup:{n.Name}",
                         NodeType.IdentityPrincipal => $"ID:{n.Name}",
                         _ => n.Name,
                     };
