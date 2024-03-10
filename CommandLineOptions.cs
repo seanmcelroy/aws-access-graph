@@ -29,6 +29,9 @@ namespace AwsAccessGraph
         [Value(index: 2, MetaName = "Output Path", Required = false, Default = "./output", HelpText = "Path to cache API results for offline processing.")]
         public string OutputPath { get; set; } = "./output";
 
+        [Value(index: 3, MetaName = "Config Path", Required = false, Default = "./conf", HelpText = "Path to find optional configuration files like IGNORE.csv.")]
+        public string ConfigPath { get; set; } = "./conf";
+
         [Option("aws-profile", Required = false, HelpText = "If specified, the profile name from the AWS config file to use to obtain AWS credentials.  If a profile is specified aws-access-key-id, aws-secret-key, aws-session-token, and aws-account-id arguments are ignored if provided.")]
         public string? AwsProfileName { get; set; }
 
@@ -49,6 +52,9 @@ namespace AwsAccessGraph
 
         [Option("okta-api-token", Required = false, HelpText = "If specified, the API token of the Okta instance to analyze.  If this is not specified but a value is present in the environment variable OKTA_API_TOKEN, that value will be used instead.")]
         public string? OktaApiToken { get; set; }
+
+        [Option(shortName: 'r', longName: "report", Required = false, HelpText = "Output an authorization text graph to console or standard out, depending on the --no-files setting.  This is default behavior.", Default = true)]
+        public bool OutputTextReport { get; set; } = true;
 
         [Option(shortName: 'd', longName: "dgml", Required = false, HelpText = "Additionally output a DGML graph.")]
         public bool OutputDGML { get; set; } = false;

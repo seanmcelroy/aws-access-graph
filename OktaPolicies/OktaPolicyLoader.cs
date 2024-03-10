@@ -47,7 +47,7 @@ namespace AwsAccessGraph.OktaPolicies
                     if (string.IsNullOrWhiteSpace(oktaDomain))
                     {
                         Console.Error.WriteLine("[X]");
-                        Console.Error.WriteLine($"WARNING: No Okta Base URL (domain) was specified.  Aborting Okta group API client creation.");
+                        Console.Error.WriteLine($"WARN: No Okta Base URL (domain) was specified.  Aborting Okta group API client creation.");
                         return null;
                     }
 

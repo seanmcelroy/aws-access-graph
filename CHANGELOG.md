@@ -1,10 +1,16 @@
 # Changelog
 
-## 1.2.0 - 2024-03-07
+## 1.2.0 - 2024-03-10
+
+### Added
+
+- New feature: Support for AWS IAM Identity Center
+- New feature: Support for an IGNORE.csv file which omits path findings in output "authorization-paths" files.  This is useful if you want to use this tool to report only findings that were not already previously expected and documented in IGNORE.csv.  See IGNORE.md for details about this feature.
 
 ### Changed
 
 - Migrated to .NET 8.0 framework.
+- Reorganized code to remove a case where AWS API was queried unnecessarily when program was only operating over cached db files.
 
 ## 1.1.1 - 2024-03-06
 
@@ -21,7 +27,7 @@
 
 ### Changed
 
-- If refresh-okta is specified and no Okta base URL is provided, quite with an error
+- If refresh-okta is specified and no Okta base URL is provided, quit with an error
 - When running a refresh run over multiple AWS accounts, read Okta data at most one time
 - Minor spelling corrections
 - Authorization Path reports now list the accounts over which they were run in the header.

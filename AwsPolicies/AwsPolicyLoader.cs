@@ -100,7 +100,7 @@ namespace AwsAccessGraph.AwsPolicies
 
                     if (string.CompareOrdinal(actualAwsAccountId, awsAccountId) != 0)
                     {
-                        Console.Error.WriteLine($"WARNING: The specified Account ID {awsAccountId} does not match the AccountId {actualAwsAccountId} read from STS.  Assuming we are actually analyzing AWS Account {actualAwsAccountId}");
+                        Console.Error.WriteLine($"WARN: The specified Account ID {awsAccountId} does not match the AccountId {actualAwsAccountId} read from STS.  Assuming we are actually analyzing AWS Account {actualAwsAccountId}");
                     }
                 }
 

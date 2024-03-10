@@ -15,6 +15,7 @@ aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 using System.Diagnostics;
+using System.Globalization;
 using Amazon.Runtime;
 using Amazon.Runtime.CredentialManagement;
 using AwsAccessGraph;
@@ -22,11 +23,20 @@ using AwsAccessGraph.AwsPolicies;
 using AwsAccessGraph.DirectedGraphMarkupLanguage;
 using AwsAccessGraph.Graphviz;
 using CommandLine;
-using Okta.Sdk.Client;
+using CsvHelper;
+using YamlDotNet.Serialization.NodeTypeResolvers;
 using static AwsAccessGraph.Constants;
 
 internal class Program
 {
+    public readonly record struct IgnoreRecord
+    {
+        public readonly string Identity { get; init; }
+        public readonly string Service { get; init; }
+    }
+
+    private static readonly List<IgnoreRecord> IgnoreRecords = [];
+
     private static async Task<int> Main(string[] args)
     {
         Console.Error.WriteLine("aws-access-graph  Copyright (C) 2024  Sean McElroy");
@@ -59,17 +69,30 @@ internal class Program
 
             try
             {
+                var configPath = Path.Combine(Environment.CurrentDirectory, opts.ConfigPath);
+                if (!Directory.Exists(configPath))
+                {
+                    if (opts.Verbose)
+                        Console.Error.WriteLine($"VERBOSE: Cannot find conf directory in working path ({configPath}), so skipping.");
+                }
+                else
+                {
+                    Console.Error.WriteLine("Reading configurations from conf directory... ");
+                    ReadConfigurations(configPath, opts.Verbose);
+                    Console.Error.WriteLine("Reading configurations from conf directory... [\u2713]");
+                }
+
                 var dbPath = Path.Combine(Environment.CurrentDirectory, opts.DbPath);
                 if (!Directory.Exists(dbPath))
                 {
-                    Console.Error.WriteLine($"Cannot find db directory in working path. Creating: {dbPath}");
+                    Console.Error.WriteLine($"INFO: Cannot find db directory in working path. Creating: {dbPath}");
                     Directory.CreateDirectory(dbPath);
                 }
 
                 var outputPath = Path.Combine(Environment.CurrentDirectory, opts.OutputPath);
                 if (!Directory.Exists(outputPath))
                 {
-                    Console.Error.WriteLine($"Cannot find output directory in working path. Creating: {outputPath}");
+                    Console.Error.WriteLine($"INFO: Cannot find output directory in working path. Creating: {outputPath}");
                     Directory.CreateDirectory(outputPath);
                 }
 
@@ -226,71 +249,15 @@ internal class Program
                     Console.Error.WriteLine("Writing Graphviz DOT file... [\u2713]");
                 }
 
-                // Who has access to Glue?
-                string pathNodeName(Node n)
+                // Authorization text reports (console or standard out)
+                if (opts.OutputTextReport)
                 {
-                    var isArn = Amazon.Arn.TryParse(n.Arn, out Amazon.Arn arn);
-                    var arnSuffix = isArn && actualAwsAccountIds.Count > 1 ? $"({arn.AccountId})" : string.Empty;
-                    return n.Type switch
-                    {
-                        NodeType.AwsInlinePolicy => $"AwsInlinePolicy:{n.Name}",
-                        NodeType.AwsPolicy => $"AwsIamPolicy:{n.Name}{arnSuffix}",
-                        NodeType.AwsGroup => $"AwsIamGroup:{n.Name}{arnSuffix}",
-                        NodeType.AwsRole => $"AwsIamRole:{n.Name}{arnSuffix}",
-                        NodeType.AwsUser => $"AwsIamUser:{n.Name}{arnSuffix}",
-                        NodeType.AwsService => $"{n.Name}",
-                        NodeType.AwsPermissionSet => $"AwsPermissionSet:{n.Name}{arnSuffix}",
-                        NodeType.OktaUser => $"OktaUser:{n.Name}",
-                        NodeType.OktaGroup => $"OktaGroup:{n.Name}",
-                        NodeType.AwsIdentityStoreUser => $"IdentityStoreUser:{n.Name}",
-                        NodeType.AwsIdentityStoreGroup => $"IdentityStoreGroup:{n.Name}",
-                        NodeType.IdentityPrincipal => $"ID:{n.Name}",
-                        _ => n.Name,
-                    };
-                }
-
-                foreach (var servicePrefix in !opts.AwsServicePrefix.Contains(',')
-                    ? [opts.AwsServicePrefix]
-                    : opts.AwsServicePrefix.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
-                {
-                    var targetService = allNodes.FindServiceNode(servicePrefix.ToLowerInvariant());
-                    if (default(Node).Equals(targetService))
-                    {
-                        Console.Error.WriteLine($"Unable to find any service node named '{servicePrefix.ToLowerInvariant()}'.  Perhaps you have no cached db files for the specified account/service?");
-                        return (int)ExitCodes.TargetServiceNotFound;
-                    }
-                    else
-                    {
-                        Console.Error.WriteLine($"Reporting on service {servicePrefix}");
-                        var pathReport = Path.Combine(outputPath, $"authorization-paths-{targetService.Name}.txt");
-                        using var fs = opts.NoFiles ? null : new FileStream(pathReport, new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None, Options = FileOptions.Asynchronous });
-                        using var sw = opts.NoFiles ? null : new StreamWriter(fs!);
-                        var writer = opts.NoFiles ? Console.Out : sw!;
-
-                        await writer.WriteLineAsync($"Report of accesses to {Constants.AwsServicePolicyNames[servicePrefix]} generated on {DateTime.UtcNow:O} for account(s) {actualAwsAccountIds.Aggregate((c, n) => c + "," + n)}.");
-
-                        var reportEdgeList = opts.NoIdentities
-                            ? allEdges.FindIdentityGroupsAttachedTo(targetService)
-                            : allEdges.FindIdentityPrincipalsAttachedTo(targetService);
-
-                        foreach (var u in reportEdgeList
-                            .GroupBy(u => u.source)
-                            .OrderBy(u => u.Key.Name))
-                        {
-                            await writer.WriteLineAsync($"{targetService.Name}: {pathNodeName(u.Key)}");
-                            foreach (var (source, path) in u)
-                            {
-                                bool readOnly = true;
-                                var pathString = path.Select(e =>
-                                {
-                                    if (e.EdgeData is PolicyAnalyzerResult result)
-                                        readOnly = result.ReadOnly(servicePrefix);
-                                    return pathNodeName(e.Source);
-                                }).Aggregate((c, n) => $"{c}->{n}");
-                                await writer.WriteLineAsync($"\tpath: {pathString}->{pathNodeName(targetService)}{(readOnly ? string.Empty : "(WRITE)")}");
-                            }
-                        }
-                    }
+                    Console.Error.WriteLine("Writing authorization text report... ");
+                    var dotPath = Path.Combine(outputPath, "graph.dot");
+                    var (ignoredIdentities, ignoredPaths) = await WriteAuthorizationReports(actualAwsAccountIds, allNodes, allEdges, outputPath, opts, cts.Token);
+                    if (ignoredPaths > 0)
+                        Console.Error.WriteLine($"\tIgnored {ignoredPaths} paths across {ignoredIdentities} identities according to {IgnoreRecords.Count} specified ignore rules.");
+                    Console.Error.WriteLine("Writing authorization text report... [\u2713]");
                 }
 
                 Console.Out.WriteLine($"{Environment.NewLine}Done.");
@@ -408,6 +375,42 @@ internal class Program
         return (awsAccessKeyId, awsSecretAccessKey, awsSessionToken, awsAccessKeyId, null);
     }
 
+    public static void ReadConfigurations(string configPath, bool verbose)
+    {
+        // IGNORE.csv
+        var ignoreCsvPath = Path.Combine(configPath, "IGNORE.csv");
+        IgnoreRecords.Clear();
+        if (File.Exists(ignoreCsvPath))
+        {
+            try
+            {
+                using var sr = new StreamReader(ignoreCsvPath);
+                using var csv = new CsvReader(sr, CultureInfo.InvariantCulture);
+                IgnoreRecords.AddRange(csv.GetRecords<IgnoreRecord>());
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"ERROR: EXCEPTION READING IGNORE FILE!{Environment.NewLine}{ex}");
+                Environment.Exit((int)ExitCodes.UnhandledError);
+            }
+        }
+        else if (verbose)
+            Console.Error.WriteLine($"VERBOSE: IGNORE file not found, skipping.");
+    }
+
+    /// <summary>
+    /// Finds the AWS accounts through which to enumerate.
+    /// 
+    /// If an account is specified in the command line arguments, it is used.
+    /// Otherwise, if cached files are present, the accounts represented in that
+    /// cache are used.  Otherwise, credentials are used to interrogate AWS STS
+    /// to identify the account associated with those credentials.
+    /// </summary>
+    /// <param name="dbPath">The path at which cached files may be located</param>
+    /// <param name="opts">Command line options provided when the program was invoked</param>
+    /// <param name="awsCredentialLoader">A function that obtains AWS credentials to interrogate STS, if necessary </param>
+    /// <param name="cancellationToken">A cancellation token used to abort this operation</param>
+    /// <returns>An array of AWS account IDs (account numbers)</returns>
     public static async Task<string[]> GetAwsAccountIds(string dbPath, CommandLineOptions opts, Func<(
         string? awsAccessKeyId,
         string? awsSecretAccessKey,
@@ -433,7 +436,7 @@ internal class Program
                 )
                 .ToArray();
 
-            if (string.IsNullOrWhiteSpace(opts.AwsAccountId) && awsAccountIds.Length >0)
+            if (string.IsNullOrWhiteSpace(opts.AwsAccountId) && awsAccountIds.Length > 0)
                 Console.Error.WriteLine($"No AWS Account ID argument was specified, but {awsAccountIds.Length} were found with cached DbPath files, so using those.");
         }
 
@@ -444,12 +447,161 @@ internal class Program
             if (stsClient != null)
             {
                 var identity = await stsClient.Value.GetCallerIdentityAsync(new Amazon.SecurityToken.Model.GetCallerIdentityRequest(), cancellationToken);
-                awsAccountIds = [..awsAccountIds, identity.Account];
+                awsAccountIds = [.. awsAccountIds, identity.Account];
             }
         }
 
         if (string.IsNullOrWhiteSpace(opts.AwsAccountId))
             return awsAccountIds;
         return [opts.AwsAccountId, .. awsAccountIds];
+    }
+
+    public static async Task<(int ignoredIdentities, int ignoredPaths)> WriteAuthorizationReports(
+        List<string> awsAccountIds,
+        List<Node> allNodes,
+        List<IEdge<Node>> allEdges,
+        string outputPath,
+        CommandLineOptions opts,
+        CancellationToken cancellationToken)
+    {
+        List<string> ignoredIdentities = [];
+        int ignoredPaths = 0;
+
+        string pathNodeName(Node n)
+        {
+            var isArn = Amazon.Arn.TryParse(n.Arn, out Amazon.Arn arn);
+            var arnSuffix = isArn && awsAccountIds.Count > 1 ? $"({arn.AccountId})" : string.Empty;
+            return n.Type switch
+            {
+                NodeType.AwsInlinePolicy => $"AwsInlinePolicy:{n.Name}",
+                NodeType.AwsPolicy => $"AwsIamPolicy:{n.Name}{arnSuffix}",
+                NodeType.AwsGroup => $"AwsIamGroup:{n.Name}{arnSuffix}",
+                NodeType.AwsRole => $"AwsIamRole:{n.Name}{arnSuffix}",
+                NodeType.AwsUser => $"AwsIamUser:{n.Name}{arnSuffix}",
+                NodeType.AwsService => $"{n.Name}",
+                NodeType.AwsPermissionSet => $"AwsPermissionSet:{n.Name}{arnSuffix}",
+                NodeType.OktaUser => $"OktaUser:{n.Name}",
+                NodeType.OktaGroup => $"OktaGroup:{n.Name}",
+                NodeType.AwsIdentityStoreUser => $"IdentityStoreUser:{n.Name}",
+                NodeType.AwsIdentityStoreGroup => $"IdentityStoreGroup:{n.Name}",
+                NodeType.IdentityPrincipal => $"ID:{n.Name}",
+                _ => n.Name,
+            };
+        }
+
+        foreach (var servicePrefix in !opts.AwsServicePrefix.Contains(',')
+                            ? [opts.AwsServicePrefix]
+                            : opts.AwsServicePrefix.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            var targetService = allNodes.FindServiceNode(servicePrefix.ToLowerInvariant());
+            if (default(Node).Equals(targetService))
+            {
+                Console.Error.WriteLine($"\tUnable to find any service node named '{servicePrefix.ToLowerInvariant()}'.  Perhaps you have no cached db files for the specified account/service?");
+                Environment.Exit((int)ExitCodes.TargetServiceNotFound);
+                return (0, 0);
+            }
+
+            Console.Error.WriteLine($"\tReporting on service {servicePrefix}");
+            var pathReport = Path.Combine(outputPath, $"authorization-paths-{targetService.Name}.txt");
+            using var fs = opts.NoFiles ? null : new FileStream(pathReport, new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None, Options = FileOptions.Asynchronous });
+            using var sw = opts.NoFiles ? null : new StreamWriter(fs!);
+            var writer = opts.NoFiles ? Console.Out : sw!;
+
+            await writer.WriteLineAsync($"Report of accesses to {Constants.AwsServicePolicyNames[servicePrefix]} generated on {DateTime.UtcNow:O} for account(s) {awsAccountIds.Aggregate((c, n) => c + "," + n)}.");
+
+            var reportEdgeList = opts.NoIdentities
+                ? allEdges.FindIdentityGroupsAttachedTo(targetService)
+                : allEdges.FindIdentityPrincipalsAttachedTo(targetService);
+
+            foreach (var u in reportEdgeList
+                .GroupBy(u => u.source)
+                .OrderBy(u => u.Key.Name))
+            {
+                var identityHeaderRecordPrinted = false;
+                var printedForIdentity = 0;
+                foreach (var (source, path) in u)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        await writer.WriteLineAsync("PROCESS ABORTED, REPORT INCOMPLETE");
+                        writer.Flush(); // No async because we are cancelling async.
+                        return (0, 0);
+                    }
+
+                    bool readOnly = true;
+                    foreach (var e in path)
+                    {
+                        if (e.EdgeData is PolicyAnalyzerResult result)
+                            readOnly = result.ReadOnly(servicePrefix);
+                    };
+                    string finalServiceString = $"{pathNodeName(targetService)}{(readOnly ? string.Empty : "(WRITE)")}";
+
+                    var shouldIgnore = false;
+                    IgnoreRecord? matchedIgnore = null;
+                    foreach (var ignored in IgnoreRecords)
+                    {
+                        var ignore1 = false;
+                        var ignore2 = false;
+
+                        foreach (var edge in path)
+                        {
+                            switch (edge.Source.Type)
+                            {
+                                case NodeType.IdentityPrincipal:
+                                case NodeType.AwsUser:
+                                case NodeType.AwsGroup:
+                                case NodeType.OktaUser:
+                                case NodeType.OktaGroup:
+                                case NodeType.AwsIdentityStoreUser:
+                                case NodeType.AwsIdentityStoreGroup:
+                                    if (string.Compare(pathNodeName(edge.Source), ignored.Identity, StringComparison.OrdinalIgnoreCase) == 0)
+                                        ignore1 = true;
+                                    break;
+                            }
+                            switch (edge.Destination.Type)
+                            {
+                                case NodeType.AwsService:
+                                    if (string.Compare(finalServiceString, ignored.Service, StringComparison.OrdinalIgnoreCase) == 0)
+                                        ignore2 = true;
+                                    break;
+                            }
+                        }
+
+                        shouldIgnore = ignore1 && ignore2;
+                        if (shouldIgnore)
+                        {
+                            matchedIgnore = ignored;
+                            break;
+                        }
+                    }
+
+                    var pathString = path.Select(e => pathNodeName(e.Source)).Aggregate((c, n) => $"{c}->{n}");
+                    var finalPathString = $"{pathString}->{finalServiceString}";
+
+                    if (shouldIgnore && matchedIgnore != null)
+                    {
+                        ignoredPaths++;
+                        if (!ignoredIdentities.Contains(u.Key.Name))
+                            ignoredIdentities.Add(u.Key.Name);
+                        if (opts.Verbose)
+                            Console.Error.WriteLine($"\tVERBOSE: Ignore rule ({matchedIgnore.Value.Identity},{matchedIgnore.Value.Service}) matched for: {finalPathString}");
+                        continue; // to next path for this user
+                    }
+
+                    if (!identityHeaderRecordPrinted)
+                    {
+                        // Do it this way so we don't print a header record if all the paths were ignored.
+                        await writer.WriteLineAsync($"{targetService.Name}: {pathNodeName(u.Key)}");
+                        identityHeaderRecordPrinted = true;
+                    }
+                    await writer.WriteLineAsync($"\tpath: {finalPathString}");
+                    printedForIdentity++;
+                }
+            }
+
+            await writer.FlushAsync(cancellationToken);
+        }
+
+        return (ignoredIdentities.Count, ignoredPaths);
     }
 }

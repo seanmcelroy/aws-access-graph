@@ -121,7 +121,7 @@ Copyright (C) 2024 Sean McElroy.  All rights reserved.
                           this is not specified but a value is present in the environment
                           variable OKTA_API_TOKEN, that value will be used instead.
 
-  -d, --dgml              Additionally output a DGML graph.
+  -d, --dgml              (Default: false) Additionally output a DGML graph.
 
   -g, --graphviz          (Default: false) Additionally output a Graphviz DOT graph.
 
