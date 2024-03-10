@@ -16,7 +16,7 @@ aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace AwsAccessGraph.AwsPolicies
 {
-    public readonly record struct PolicyAnalyzerResult : IEquatable<PolicyAnalyzerResult>
+    public readonly record struct PolicyAnalyzerResult : IComparable, IComparable<PolicyAnalyzerResult>, IEquatable<PolicyAnalyzerResult>
     {
         public readonly PolicyArn PolicyArn { get; init; }
 
@@ -24,16 +24,66 @@ namespace AwsAccessGraph.AwsPolicies
 
         public readonly List<RoleId> AssumeRoleTargets { get; init; }
 
+        private readonly Func<string>? StringFormatter { get; init; }
+
+        public PolicyStanza FirstWriteStanzaForService(string servicePrefix) =>
+            Stanzas
+                .Where(s => string.Compare(s.Service, servicePrefix, StringComparison.OrdinalIgnoreCase) == 0)
+                .OrderBy(s => s.Write ? 1 : 0)
+                .First();
+
+        public bool ReadOnly(string servicePrefix) =>
+            !Stanzas
+                .Where(s => string.CompareOrdinal(s.Service, servicePrefix) == 0)
+                .Any(s => s.Write && !s.Deny);
+
+        public int CompareTo(PolicyAnalyzerResult other)
+        {
+            if (other == default)
+                return -1;
+            if (Stanzas.Count != other.Stanzas.Count)
+                return Stanzas.Count - other.Stanzas.Count;
+            if (AssumeRoleTargets.Count != other.AssumeRoleTargets.Count)
+                return AssumeRoleTargets.Count - other.AssumeRoleTargets.Count;
+
+            return string.Compare(PolicyArn, other.PolicyArn, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public int CompareTo(object? other)
+        {
+            if (other == null || GetType() != other.GetType())
+                return -1;
+
+            return CompareTo((PolicyAnalyzerResult)other);
+        }
+
         public bool Equals(PolicyAnalyzerResult? other)
         {
             if (other == null)
                 return false;
-            if (this.Stanzas.Count != other.Value.Stanzas.Count)
+            if (Stanzas.Count != other.Value.Stanzas.Count)
                 return false;
-            if (this.AssumeRoleTargets.Count != other.Value.AssumeRoleTargets.Count)
+            if (AssumeRoleTargets.Count != other.Value.AssumeRoleTargets.Count)
                 return false;
 
-            return string.Compare(this.PolicyArn, other.Value.PolicyArn, StringComparison.OrdinalIgnoreCase) == 0;
+            return string.Compare(PolicyArn, other.Value.PolicyArn, StringComparison.OrdinalIgnoreCase) == 0;
         }
+
+        public PolicyAnalyzerResult SubsetForService(string servicePrefix)
+        {
+            List<PolicyStanza> subsetStanzas = [.. Stanzas.Where(s => string.CompareOrdinal(s.Service, servicePrefix) == 0).OrderBy(s => s.Write ? 1 : 0)];
+            return new PolicyAnalyzerResult
+            {
+                PolicyArn = PolicyArn,
+                Stanzas = subsetStanzas,
+                AssumeRoleTargets = AssumeRoleTargets,
+                StringFormatter = () => subsetStanzas.First().Write ? "controls" : "reads"
+            };
+        }
+
+        public override string ToString() => 
+            (StringFormatter == null) 
+                ? "references" 
+                : StringFormatter();
     }
 }

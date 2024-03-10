@@ -22,7 +22,7 @@ namespace AwsAccessGraph.Graphviz
         public static async Task SerializeAsync(
             Stream stream,
             IEnumerable<Node> nodes,
-            IEnumerable<Edge<Node, string>> edges,
+            IEnumerable<IEdge<Node>> edges,
             CancellationToken cancellationToken = default)
         {
             var stmts = new List<string>();
@@ -74,9 +74,9 @@ namespace AwsAccessGraph.Graphviz
             foreach (var edge in edges)
             {
                 if (edge.Source.Type == NodeType.AwsUser)
-                    stmts.Add($"\"{edge.Source.Arn}\" -> \"{edge.Destination.Arn}\" [color=cornflowerblue label=\"{edge.EdgeData}\"]");
+                    stmts.Add($"\"{edge.Source.Arn}\" -> \"{edge.Destination.Arn}\" [color=cornflowerblue label=\"{edge}\"]");
                 else
-                    stmts.Add($"\"{edge.Source.Arn}\" -> \"{edge.Destination.Arn}\" [label=\"{edge.EdgeData}\"]");
+                    stmts.Add($"\"{edge.Source.Arn}\" -> \"{edge.Destination.Arn}\" [label=\"{edge}\"]");
             }
 
             var stmt = stmts.Aggregate((c, n) => $"{c};\n\t{n}");
@@ -87,7 +87,7 @@ namespace AwsAccessGraph.Graphviz
             await sw.FlushAsync();
         }
 
-        public static async Task WriteAsync(string dgmlPath, IEnumerable<Node> nodes, IEnumerable<Edge<Node, string>> edges, CancellationToken cancellationToken = default)
+        public static async Task WriteAsync(string dgmlPath, IEnumerable<Node> nodes, IEnumerable<IEdge<Node>> edges, CancellationToken cancellationToken = default)
         {
             using var fs = new FileStream(dgmlPath, new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None, Options = FileOptions.None });
             await SerializeAsync(fs, nodes, edges, cancellationToken);

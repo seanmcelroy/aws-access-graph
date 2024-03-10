@@ -14,15 +14,19 @@ You should have received a copy of the GNU Affero General Public License along w
 aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 */
 
-using Amazon.Runtime;
-
-namespace AwsAccessGraph.AwsPolicies
+namespace AwsAccessGraph
 {
-    public readonly record struct PolicyStanza
+    public interface IEdge<TNode> : IEdgeInternal<TNode, TNode>
+        where TNode : INode, IComparable<TNode>, IEquatable<TNode>
     {
-        public readonly bool Deny { get; init; }
-        public readonly bool Write { get; init; }
-        public readonly string Service { get; init; }
-        public readonly string[] ServiceActions { get; init; }
+        public object EdgeData { get; }
+    }
+
+    public interface IEdgeInternal<out TNode, TNode2> : IComparable<IEdge<TNode2>>
+        where TNode : TNode2, INode, IComparable<TNode>, IComparable<TNode2>, IEquatable<TNode>, IEquatable<TNode2>
+        where TNode2 : INode, IComparable<TNode2>, IEquatable<TNode2>
+    {
+        public TNode Source { get; }
+        public TNode Destination { get; }
     }
 }

@@ -16,7 +16,7 @@ aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace AwsAccessGraph
 {
-    public readonly record struct Node : IComparable<Node>, IEquatable<Node>
+    public readonly record struct Node : INode, IComparable<Node>, IEquatable<Node>
     {
         public string Name { get; init; }
         public NodeType Type { get; init; }
@@ -29,15 +29,33 @@ namespace AwsAccessGraph
             return Arn.CompareTo(other.Arn);
         }
 
+        public int CompareTo(INode? other)
+        {
+            if (other == null || GetType() != other.GetType())
+                return -1;
+
+            return CompareTo((Node)other);
+        }
+
         public bool Equals(Node? other)
         {
             if (other == null)
                 return false;
 
-            return string.Compare(this.Name, other.Value.Name, StringComparison.OrdinalIgnoreCase) == 0
-                && this.Type.Equals(other.Value.Type)
-                && string.Compare(this.Arn, other.Value.Arn, StringComparison.OrdinalIgnoreCase) == 0
+            return string.Compare(Name, other.Value.Name, StringComparison.OrdinalIgnoreCase) == 0
+                && Type.Equals(other.Value.Type)
+                && string.Compare(Arn, other.Value.Arn, StringComparison.OrdinalIgnoreCase) == 0
             ;
         }
+
+        public bool Equals(INode? other)
+        {
+            if (other == null || GetType() != other.GetType())
+                return false;
+
+            return string.Compare(Name, other.Name, StringComparison.OrdinalIgnoreCase) == 0;
+        }
+
+        public override int GetHashCode() => Name.GetHashCode() + Type.GetHashCode() + Arn.GetHashCode();
     }
 }

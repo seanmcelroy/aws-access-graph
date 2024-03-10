@@ -40,48 +40,48 @@ namespace AwsAccessGraph
             return result;
         }
 
-        public static IEnumerable<(Node source, IEnumerable<Edge<Node, string>> path)> FindGroupsAttachedTo(
-            this IEnumerable<Edge<Node, string>> edges,
+        public static IEnumerable<(Node source, IEnumerable<IEdge<Node>> path)> FindGroupsAttachedTo(
+            this IEnumerable<IEdge<Node>> edges,
             Node target)
         {
-            return edges.FindAncestors(target, new List<Edge<Node, string>>(), NodeType.AwsGroup);
+            return edges.FindAncestors(target, [], NodeType.AwsGroup);
         }
 
-        public static IEnumerable<(Node source, IEnumerable<Edge<Node, string>> path)> FindRolesAttachedTo(
-            this IEnumerable<Edge<Node, string>> edges,
+        public static IEnumerable<(Node source, IEnumerable<IEdge<Node>> path)> FindRolesAttachedTo(
+            this IEnumerable<IEdge<Node>> edges,
             Node target)
         {
-            return edges.FindAncestors(target, new List<Edge<Node, string>>(), NodeType.AwsRole);
+            return edges.FindAncestors(target, [], NodeType.AwsRole);
         }
 
-        public static IEnumerable<(Node service, IEnumerable<Edge<Node, string>> path)> FindServicesAttachedTo(
-            this IEnumerable<Edge<Node, string>> edges,
+        public static IEnumerable<(Node service, IEnumerable<IEdge<Node>> path)> FindServicesAttachedTo(
+            this IEnumerable<IEdge<Node>> edges,
             Node target)
         {
-            return edges.FindDescendants(target, new List<Edge<Node, string>>(), NodeType.AwsService);
+            return edges.FindDescendants(target, [], NodeType.AwsService);
         }
 
-        public static IEnumerable<(Node source, IEnumerable<Edge<Node, string>> path)> FindIdentityGroupsAttachedTo(
-            this IEnumerable<Edge<Node, string>> edges,
+        public static IEnumerable<(Node source, IEnumerable<IEdge<Node>> path)> FindIdentityGroupsAttachedTo(
+            this IEnumerable<IEdge<Node>> edges,
             Node target)
         {
-            if (edges.FindAncestors(target, new List<Edge<Node, string>>(), NodeType.OktaGroup).Any())
-                return edges.FindAncestors(target, new List<Edge<Node, string>>(), NodeType.OktaGroup);
+            if (edges.FindAncestors(target, [], NodeType.OktaGroup).Any())
+                return edges.FindAncestors(target, [], NodeType.OktaGroup);
             else
-                return edges.FindAncestors(target, new List<Edge<Node, string>>(), NodeType.AwsGroup);
+                return edges.FindAncestors(target, [], NodeType.AwsGroup);
         }
 
-        public static IEnumerable<(Node source, IEnumerable<Edge<Node, string>> path)> FindIdentityPrincipalsAttachedTo(
-            this IEnumerable<Edge<Node, string>> edges,
+        public static IEnumerable<(Node source, IEnumerable<IEdge<Node>> path)> FindIdentityPrincipalsAttachedTo(
+            this IEnumerable<IEdge<Node>> edges,
             Node target)
         {
-            return edges.FindAncestors(target, new List<Edge<Node, string>>(), NodeType.IdentityPrincipal);
+            return edges.FindAncestors(target, [], NodeType.IdentityPrincipal);
         }
 
-        private static IEnumerable<(Node source, IEnumerable<Edge<Node, string>> path)> FindAncestors(
-            this IEnumerable<Edge<Node, string>> edges,
+        private static IEnumerable<(Node source, IEnumerable<IEdge<Node>> path)> FindAncestors(
+            this IEnumerable<IEdge<Node>> edges,
             Node target,
-            IEnumerable<Edge<Node, string>> path,
+            IEnumerable<IEdge<Node>> path,
             NodeType ancestorNodeType)
         {
             // Find everything attached to target whether a group or not
@@ -93,12 +93,12 @@ namespace AwsAccessGraph
                     continue;
 
                 var pathCount = path.Count();
-                var pathArray = pathCount == 0 ? (new[] { default(Edge<Node, string>) }) : new Edge<Node, string>[pathCount + 1];
+                var pathArray = pathCount == 0 ? (new IEdge<Node>[1]) : new IEdge<Node>[pathCount + 1];
                 if (pathCount > 0)
                     Array.Copy(path.ToArray(), 0, pathArray, 1, pathCount);
                 pathArray[0] = dt;
 
-                if (dt.Source.Type.Equals(ancestorNodeType))
+                if (dt.Source is Node node && node.Type.Equals(ancestorNodeType))
                 {
                     yield return (dt.Source, pathArray);
                 }
@@ -112,10 +112,10 @@ namespace AwsAccessGraph
             }
         }
 
-        private static IEnumerable<(Node source, IEnumerable<Edge<Node, string>> path)> FindDescendants(
-            this IEnumerable<Edge<Node, string>> edges,
+        private static IEnumerable<(Node source, IEnumerable<IEdge<Node>> path)> FindDescendants(
+            this IEnumerable<IEdge<Node>> edges,
             Node target,
-            IEnumerable<Edge<Node, string>> path,
+            IEnumerable<IEdge<Node>> path,
             NodeType descendentNodeType)
         {
             // Find everything attached to target whether a group or not
@@ -127,14 +127,14 @@ namespace AwsAccessGraph
                     continue;
 
                 var pathCount = path.Count();
-                var pathArray = pathCount == 0 ? (new[] { default(Edge<Node, string>) }) : new Edge<Node, string>[pathCount + 1];
+                var pathArray = pathCount == 0 ? new IEdge<Node>[1] : new IEdge<Node>[pathCount + 1];
                 if (pathCount > 0)
                     Array.Copy(path.ToArray(), 0, pathArray, 1, pathCount);
                 pathArray[0] = st;
 
-                if (st.Destination.Type.Equals(descendentNodeType))
+                if (st.Destination is Node node && node.Type.Equals(descendentNodeType))
                 {
-                    yield return (st.Destination, pathArray);
+                    yield return (node, pathArray);
                 }
                 else
                 {

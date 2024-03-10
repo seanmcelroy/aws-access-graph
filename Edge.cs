@@ -16,23 +16,19 @@ aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace AwsAccessGraph
 {
-    public readonly struct Edge<TNode, TEdgeData> : IComparable<Edge<TNode, TEdgeData>>
-        where TNode : IComparable<TNode>
-        where TEdgeData : IComparable
+    public class Edge<TNode, TEdgeData>(TNode source, TNode destination, TEdgeData edgeData) : IEdge<TNode>, IComparable<IEdge<TNode>>
+        where TNode : struct, INode, IComparable<TNode>, IEquatable<TNode>
     {
-        public readonly TNode Source { get; }
-        public readonly TNode Destination { get; }
-        public readonly TEdgeData EdgeData { get; }
+        public TNode Source { get; } = source;
+        public TNode Destination { get; } = destination;
+        public TEdgeData EdgeData { get; } = edgeData;
+        object IEdge<TNode>.EdgeData { get => EdgeData; }
 
-        public Edge(TNode source, TNode destination, TEdgeData edgeData)
-        {
-            this.Source = source;
-            this.Destination = destination;
-            this.EdgeData = edgeData;
-        }
+        public int CompareTo(IEdge<TNode>? other) => other == null
+            ? -1
+            : Source.CompareTo(other.Source) +
+                Destination.CompareTo(other.Destination);
 
-        public int CompareTo(Edge<TNode, TEdgeData> other) => this.Source.CompareTo(other.Destination) +
-            this.Destination.CompareTo(other.Destination) +
-            this.EdgeData.CompareTo(other.EdgeData);
+        public override string ToString() => EdgeData?.ToString() ?? $"{Source.Name}->{Destination.Name}";
     }
 }

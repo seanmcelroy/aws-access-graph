@@ -18,9 +18,11 @@ using System.Diagnostics;
 using Amazon.Runtime;
 using Amazon.Runtime.CredentialManagement;
 using AwsAccessGraph;
+using AwsAccessGraph.AwsPolicies;
 using AwsAccessGraph.DirectedGraphMarkupLanguage;
 using AwsAccessGraph.Graphviz;
 using CommandLine;
+using Okta.Sdk.Client;
 using static AwsAccessGraph.Constants;
 
 internal class Program
@@ -50,13 +52,13 @@ internal class Program
             }
 
             var cts = new CancellationTokenSource();
+            Console.CancelKeyPress += delegate
+            {
+                cts.Cancel();
+            };
+
             try
             {
-                Console.CancelKeyPress += delegate
-                {
-                    cts.Cancel();
-                };
-
                 var dbPath = Path.Combine(Environment.CurrentDirectory, opts.DbPath);
                 if (!Directory.Exists(dbPath))
                 {
@@ -71,144 +73,8 @@ internal class Program
                     Directory.CreateDirectory(outputPath);
                 }
 
-                string? awsAccessKeyId = null, awsSecretAccessKey = null, awsSessionToken = null, awsAccountIdArg = null;
-                if (!string.IsNullOrWhiteSpace(opts.AwsProfileName))
-                {
-                    var chain = new CredentialProfileStoreChain();
-                    if (!chain.TryGetAWSCredentials(opts.AwsProfileName, out var awsCredentials))
-                    {
-                        Console.Error.WriteLine($"Failed to find the {opts.AwsProfileName} profile");
-                        return (int)ExitCodes.AwsProfileNotFound;
-                    }
-
-                    // IAM Identity Center
-                    if (awsCredentials is SSOAWSCredentials ssoCredentials)
-                    {
-                        ssoCredentials.Options.ClientName = "aws-access-graph";
-                        ssoCredentials.Options.SsoVerificationCallback = args =>
-                        {
-                            Console.Error.WriteLine($"Launching SSO window to obtain credentials for the {opts.AwsProfileName} profile");
-                            Process.Start(new ProcessStartInfo
-                            {
-                                FileName = args.VerificationUriComplete,
-                                UseShellExecute = true
-                            });
-                        };
-
-                        var credentials = ssoCredentials.GetCredentials();
-                        awsAccessKeyId = opts.AwsAccessKeyId ?? credentials.AccessKey;
-                        awsSecretAccessKey = opts.AwsSecretAccessKey ?? credentials.SecretKey;
-                        awsSessionToken = opts.AwsSessionToken ?? credentials.Token;
-                        awsAccountIdArg = opts.AwsAccountId ?? ssoCredentials.AccountId;
-                    }
-                    else if (awsCredentials is AssumeRoleAWSCredentials assumeRoleCredentials)
-                    {
-                        Console.Error.WriteLine($"Reading env variables and command line argument overrides for credentials");
-                        awsAccessKeyId = opts.AwsAccessKeyId ?? Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
-                        awsSecretAccessKey = opts.AwsSecretAccessKey ?? Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
-                        awsSessionToken = opts.AwsSessionToken ?? Environment.GetEnvironmentVariable("AWS_SESSION_TOKEN");
-                        awsAccountIdArg = opts.AwsAccountId ?? Environment.GetEnvironmentVariable("AWS_ACCOUNT_ID");
-
-                        if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
-                            || string.IsNullOrWhiteSpace(awsSecretAccessKey))
-                            && string.IsNullOrWhiteSpace(awsSessionToken))
-                        {
-                            Console.Error.WriteLine($"Error: A profile name {opts.AwsProfileName} with a role assumption was specified, but AWS credentials were not provided.");
-                            return (int)ExitCodes.AwsCredentialsNotSpecified;
-                        }
-
-                        Console.Error.WriteLine($"Attempting to gather AWS assume role credentials for the {opts.AwsProfileName} profile");
-                        assumeRoleCredentials.Options.MfaTokenCodeCallback = () =>
-                        {
-                            Console.WriteLine($"Please enter MFA code for {assumeRoleCredentials.Options.MfaSerialNumber}:");
-                            return Console.ReadLine();
-                        };
-
-                        var assumedCredentials = assumeRoleCredentials.GetCredentials();
-                        awsAccessKeyId = assumedCredentials.AccessKey;
-                        awsSecretAccessKey = assumedCredentials.SecretKey;
-                        awsSessionToken = assumedCredentials.Token;
-                    }
-                    else
-                    {
-                        Console.Error.WriteLine($"Attempting to gather AWS credentials for the {opts.AwsProfileName} profile");
-                        var credentials = awsCredentials.GetCredentials();
-                        awsAccessKeyId = opts.AwsAccessKeyId ?? credentials.AccessKey;
-                        awsSecretAccessKey = opts.AwsSecretAccessKey ?? credentials.SecretKey;
-                        awsSessionToken = opts.AwsSessionToken ?? credentials.Token;
-                        awsAccountIdArg = opts.AwsAccountId ?? Environment.GetEnvironmentVariable("AWS_ACCOUNT_ID");
-                    }
-                }
-                else
-                {
-                    Console.Error.WriteLine($"Reading env variables and command line argument overrides for credentials");
-                    awsAccessKeyId = opts.AwsAccessKeyId ?? Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
-                    awsSecretAccessKey = opts.AwsSecretAccessKey ?? Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
-                    awsSessionToken = opts.AwsSessionToken ?? Environment.GetEnvironmentVariable("AWS_SESSION_TOKEN");
-                    awsAccountIdArg = opts.AwsAccountId ?? Environment.GetEnvironmentVariable("AWS_ACCOUNT_ID");
-                }
-
-                if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
-                    || string.IsNullOrWhiteSpace(awsSecretAccessKey))
-                    && string.IsNullOrWhiteSpace(awsSessionToken)
-                    && opts.NoFiles)
-                {
-                    Console.Error.WriteLine("Error: no-files was specified, but AWS credentials were not provided.");
-                    return (int)ExitCodes.AwsCredentialsNotSpecified;
-                }
-
-                string[] awsAccountIds;
-
-                if (string.IsNullOrWhiteSpace(awsAccountIdArg)
-                    && string.IsNullOrWhiteSpace(awsAccessKeyId)
-                    && string.IsNullOrWhiteSpace(awsSecretAccessKey))
-                {
-                    var files = Directory.GetFiles(dbPath, "aws-*-list.json", new EnumerationOptions { IgnoreInaccessible = true });
-                    if (files.Any())
-                    {
-                        awsAccountIds = files
-                            .Select(f => System.Text.RegularExpressions.Regex.Match(f, "aws-(?<aid>\\d{12})-").Groups["aid"].Value)
-                            .Distinct()
-                            .Where(a =>
-                                files.Any(f => f.IndexOf($"aws-{a}-group-list.json") > -1)
-                                && files.Any(f => f.IndexOf($"aws-{a}-policy-list.json") > -1)
-                                && files.Any(f => f.IndexOf($"aws-{a}-role-list.json") > -1)
-                                && files.Any(f => f.IndexOf($"aws-{a}-saml-idp-list.json") > -1)
-                                && files.Any(f => f.IndexOf($"aws-{a}-user-list.json") > -1)
-                            )
-                            .ToArray();
-
-                        Console.Error.WriteLine($"No AWS Account ID argument was specified, but {awsAccountIds.Length} were found with cached DbPath files, so using those.");
-                    }
-                    else
-                    {
-                        awsAccountIds = [];
-                    }
-                }
-                else
-                {
-                    if (string.IsNullOrWhiteSpace(awsAccountIdArg))
-                    {
-                        if (!string.IsNullOrWhiteSpace(awsSessionToken))
-                        {
-                            // Infer from session token.
-                        }
-                        else
-                        {
-                            Console.Error.WriteLine("Error: An AWS Account ID cannot be inferred and was not specified as a command line argument.");
-                            Console.WriteLine($"awsAccountIdArg:    {(string.IsNullOrWhiteSpace(awsAccountIdArg) ? "SPECIFIED" : "UNSPECIFIED")}");
-                            Console.WriteLine($"awsAccessKeyId:     {(string.IsNullOrWhiteSpace(awsAccessKeyId) ? "SPECIFIED" : "UNSPECIFIED")}");
-                            Console.WriteLine($"awsSecretAccessKey: {(string.IsNullOrWhiteSpace(awsSecretAccessKey) ? "SPECIFIED" : "UNSPECIFIED")}");
-                            Console.WriteLine($"awsSessionToken:    {(string.IsNullOrWhiteSpace(awsSessionToken) ? "SPECIFIED" : "UNSPECIFIED")}");
-                            Console.Error.WriteLine("Hint: Maybe you're running this inside of aws-mfa or have env variables set for an AWS profile and did not intend to?");
-                            return (int)ExitCodes.AwsAccountIdMissing;
-                        }
-                    }
-                    awsAccountIds = new[] { awsAccountIdArg! };
-                }
-
                 var allNodes = new List<Node>();
-                var allEdges = new List<Edge<Node, string>>();
+                var allEdges = new List<IEdge<Node>>();
                 var accountRoleList = new Dictionary<string, List<Amazon.IdentityManagement.Model.RoleDetail>>();
 
                 var actualAwsAccountIds = new List<string>();
@@ -224,13 +90,17 @@ internal class Program
                         forceRefresh: opts.Refresh || opts.RefreshOkta,
                         cancellationToken: cts.Token);
 
-                foreach (var awsAccountId in awsAccountIds)
+                var accts = await GetAwsAccountIds(
+                    dbPath,
+                    opts,
+                    () => GetAwsCredentials(opts, dbPath),
+                    cts.Token);
+
+                foreach (var awsAccountId in accts)
                 {
                     Console.Error.WriteLine($"Processing AWS Account ID {awsAccountId}...");
-                    var (awsGroups, awsPolicies, awsRoles, awsUsers, awsSamlIdPs, permissionSetList, permissionSetManagedPolicies, permissionSetInlinePolicies, identityStoreUsers, identityStoreGroups, identityStoreGroupMemberships, permissionSetAssignments, actualAwsAccountId) = await AwsAccessGraph.AwsPolicies.AwsPolicyLoader.LoadAwsPolicyAsync(
-                        awsAccessKeyId: awsAccessKeyId,
-                        awsSecretAccessKey: awsSecretAccessKey,
-                        awsSessionToken: awsSessionToken,
+                    var (awsGroups, awsPolicies, awsRoles, awsUsers, awsSamlIdPs, permissionSetList, permissionSetManagedPolicies, permissionSetInlinePolicies, identityStoreUsers, identityStoreGroups, identityStoreGroupMemberships, permissionSetAssignments, actualAwsAccountId) = await AwsPolicyLoader.LoadAwsPolicyAsync(
+                        () => GetAwsCredentials(opts, dbPath),
                         awsAccountId: awsAccountId,
                         outputDirectory: dbPath,
                         noFiles: opts.NoFiles,
@@ -322,7 +192,9 @@ internal class Program
                             //return default(Edge<Node, string>);
                         }
 
-                        return new Edge<Node, string>(sourceNode, destNode, e.EdgeData);
+                        var edgeType = e.GetType();
+                        var newEdge = Activator.CreateInstance(edgeType, sourceNode, destNode, e.EdgeData);
+                        return newEdge;
                     })
                     .Where(e => !e.Equals(default(Edge<Node, string>)))
                     .ToList();
@@ -330,7 +202,7 @@ internal class Program
                     Console.WriteLine($"Deduped {allEdges.Count} edges into {dedupedEdges.Count} edges.");
 
                 allNodes = dedupedNodes;
-                allEdges = dedupedEdges;
+                allEdges = dedupedEdges.Select(x => (IEdge<Node>)x!).ToList();
 
                 // Write graph out to DGML file
                 if (opts.OutputDGML)
@@ -355,7 +227,7 @@ internal class Program
                 }
 
                 // Who has access to Glue?
-                var pathNodeName = (Node n) =>
+                string pathNodeName(Node n)
                 {
                     var isArn = Amazon.Arn.TryParse(n.Arn, out Amazon.Arn arn);
                     var arnSuffix = isArn && actualAwsAccountIds.Count > 1 ? $"({arn.AccountId})" : string.Empty;
@@ -375,10 +247,10 @@ internal class Program
                         NodeType.IdentityPrincipal => $"ID:{n.Name}",
                         _ => n.Name,
                     };
-                };
+                }
 
                 foreach (var servicePrefix in !opts.AwsServicePrefix.Contains(',')
-                    ? new string[] { opts.AwsServicePrefix }
+                    ? [opts.AwsServicePrefix]
                     : opts.AwsServicePrefix.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
                 {
                     var targetService = allNodes.FindServiceNode(servicePrefix.ToLowerInvariant());
@@ -400,15 +272,22 @@ internal class Program
                         var reportEdgeList = opts.NoIdentities
                             ? allEdges.FindIdentityGroupsAttachedTo(targetService)
                             : allEdges.FindIdentityPrincipalsAttachedTo(targetService);
+
                         foreach (var u in reportEdgeList
                             .GroupBy(u => u.source)
                             .OrderBy(u => u.Key.Name))
                         {
                             await writer.WriteLineAsync($"{targetService.Name}: {pathNodeName(u.Key)}");
-                            foreach (var p in u)
+                            foreach (var (source, path) in u)
                             {
-                                var pathString = p.path.Select(e => pathNodeName(e.Source)).Aggregate((c, n) => $"{c}->{n}");
-                                await writer.WriteLineAsync($"\tpath: {pathString}->{pathNodeName(targetService)}");
+                                bool readOnly = true;
+                                var pathString = path.Select(e =>
+                                {
+                                    if (e.EdgeData is PolicyAnalyzerResult result)
+                                        readOnly = result.ReadOnly(servicePrefix);
+                                    return pathNodeName(e.Source);
+                                }).Aggregate((c, n) => $"{c}->{n}");
+                                await writer.WriteLineAsync($"\tpath: {pathString}->{pathNodeName(targetService)}{(readOnly ? string.Empty : "(WRITE)")}");
                             }
                         }
                     }
@@ -431,5 +310,146 @@ internal class Program
             }
         },
         errs => Task.FromResult((int)ExitCodes.ErrorParsingCommandLineArguments));
+    }
+
+    public static (
+        string? awsAccessKeyId,
+        string? awsSecretAccessKey,
+        string? awsSessionToken,
+        string? awsAccountIdArg,
+        ExitCodes? exitCode) GetAwsCredentials(CommandLineOptions opts, string dbPath)
+    {
+        string? awsAccessKeyId = null, awsSecretAccessKey = null, awsSessionToken = null, awsAccountIdArg = null;
+        if (!string.IsNullOrWhiteSpace(opts.AwsProfileName))
+        {
+            var chain = new CredentialProfileStoreChain();
+            if (!chain.TryGetAWSCredentials(opts.AwsProfileName, out var awsCredentials))
+            {
+                Console.Error.WriteLine($"Failed to find the {opts.AwsProfileName} profile");
+                return (null, null, null, null, ExitCodes.AwsProfileNotFound);
+            }
+
+            // IAM Identity Center
+            if (awsCredentials is SSOAWSCredentials ssoCredentials)
+            {
+                ssoCredentials.Options.ClientName = "aws-access-graph";
+                ssoCredentials.Options.SsoVerificationCallback = args =>
+                {
+                    Console.Error.WriteLine($"Launching SSO window to obtain credentials for the {opts.AwsProfileName} profile");
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = args.VerificationUriComplete,
+                        UseShellExecute = true
+                    });
+                };
+
+                var credentials = ssoCredentials.GetCredentials();
+                awsAccessKeyId = opts.AwsAccessKeyId ?? credentials.AccessKey;
+                awsSecretAccessKey = opts.AwsSecretAccessKey ?? credentials.SecretKey;
+                awsSessionToken = opts.AwsSessionToken ?? credentials.Token;
+                awsAccountIdArg = opts.AwsAccountId ?? ssoCredentials.AccountId;
+            }
+            else if (awsCredentials is AssumeRoleAWSCredentials assumeRoleCredentials)
+            {
+                Console.Error.WriteLine($"Reading env variables and command line argument overrides for credentials");
+                awsAccessKeyId = opts.AwsAccessKeyId ?? Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
+                awsSecretAccessKey = opts.AwsSecretAccessKey ?? Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
+                awsSessionToken = opts.AwsSessionToken ?? Environment.GetEnvironmentVariable("AWS_SESSION_TOKEN");
+                awsAccountIdArg = opts.AwsAccountId ?? Environment.GetEnvironmentVariable("AWS_ACCOUNT_ID");
+
+                if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
+                    || string.IsNullOrWhiteSpace(awsSecretAccessKey))
+                    && string.IsNullOrWhiteSpace(awsSessionToken))
+                {
+                    Console.Error.WriteLine($"Error: A profile name {opts.AwsProfileName} with a role assumption was specified, but AWS credentials were not provided.");
+                    return (null, null, null, null, ExitCodes.AwsCredentialsNotSpecified);
+                }
+
+                Console.Error.WriteLine($"Attempting to gather AWS assume role credentials for the {opts.AwsProfileName} profile");
+                assumeRoleCredentials.Options.MfaTokenCodeCallback = () =>
+                {
+                    Console.WriteLine($"Please enter MFA code for {assumeRoleCredentials.Options.MfaSerialNumber}:");
+                    return Console.ReadLine();
+                };
+
+                var assumedCredentials = assumeRoleCredentials.GetCredentials();
+                awsAccessKeyId = assumedCredentials.AccessKey;
+                awsSecretAccessKey = assumedCredentials.SecretKey;
+                awsSessionToken = assumedCredentials.Token;
+            }
+            else
+            {
+                Console.Error.WriteLine($"Attempting to gather AWS credentials for the {opts.AwsProfileName} profile");
+                var credentials = awsCredentials.GetCredentials();
+                awsAccessKeyId = opts.AwsAccessKeyId ?? credentials.AccessKey;
+                awsSecretAccessKey = opts.AwsSecretAccessKey ?? credentials.SecretKey;
+                awsSessionToken = opts.AwsSessionToken ?? credentials.Token;
+                awsAccountIdArg = opts.AwsAccountId ?? Environment.GetEnvironmentVariable("AWS_ACCOUNT_ID");
+            }
+        }
+        else
+        {
+            Console.Error.WriteLine($"Reading env variables and command line argument overrides for credentials");
+            awsAccessKeyId = opts.AwsAccessKeyId ?? Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
+            awsSecretAccessKey = opts.AwsSecretAccessKey ?? Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
+            awsSessionToken = opts.AwsSessionToken ?? Environment.GetEnvironmentVariable("AWS_SESSION_TOKEN");
+            awsAccountIdArg = opts.AwsAccountId ?? Environment.GetEnvironmentVariable("AWS_ACCOUNT_ID");
+        }
+
+        if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
+            || string.IsNullOrWhiteSpace(awsSecretAccessKey))
+            && string.IsNullOrWhiteSpace(awsSessionToken)
+            && opts.NoFiles)
+        {
+            Console.Error.WriteLine("Error: no-files was specified, but AWS credentials were not provided.");
+            return (null, null, null, null, ExitCodes.AwsCredentialsNotSpecified);
+        }
+
+        return (awsAccessKeyId, awsSecretAccessKey, awsSessionToken, awsAccessKeyId, null);
+    }
+
+    public static async Task<string[]> GetAwsAccountIds(string dbPath, CommandLineOptions opts, Func<(
+        string? awsAccessKeyId,
+        string? awsSecretAccessKey,
+        string? awsSessionToken,
+        string? awsAccountIdArg,
+        ExitCodes? exitCode)> awsCredentialLoader,
+        CancellationToken cancellationToken)
+    {
+        string[] awsAccountIds = [];
+
+        var files = Directory.GetFiles(dbPath, "aws-*-list.json", new EnumerationOptions { IgnoreInaccessible = true });
+        if (files.Length != 0)
+        {
+            awsAccountIds = files
+                .Select(f => System.Text.RegularExpressions.Regex.Match(f, "aws-(?<aid>\\d{12})-").Groups["aid"].Value)
+                .Distinct()
+                .Where(a =>
+                    files.Any(f => f.IndexOf($"aws-{a}-group-list.json") > -1)
+                    && files.Any(f => f.IndexOf($"aws-{a}-policy-list.json") > -1)
+                    && files.Any(f => f.IndexOf($"aws-{a}-role-list.json") > -1)
+                    && files.Any(f => f.IndexOf($"aws-{a}-saml-idp-list.json") > -1)
+                    && files.Any(f => f.IndexOf($"aws-{a}-user-list.json") > -1)
+                )
+                .ToArray();
+
+            if (string.IsNullOrWhiteSpace(opts.AwsAccountId) && awsAccountIds.Length >0)
+                Console.Error.WriteLine($"No AWS Account ID argument was specified, but {awsAccountIds.Length} were found with cached DbPath files, so using those.");
+        }
+
+        var forceRefresh = opts.Refresh || opts.RefreshAws || (string.IsNullOrWhiteSpace(opts.AwsAccountId) && awsAccountIds.Length == 0);
+        if (forceRefresh)
+        {
+            var stsClient = Globals.GetStsClientFactory(awsCredentialLoader)!;
+            if (stsClient != null)
+            {
+                var identity = await stsClient.Value.GetCallerIdentityAsync(new Amazon.SecurityToken.Model.GetCallerIdentityRequest(), cancellationToken);
+                awsAccountIds = [..awsAccountIds, identity.Account];
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(opts.AwsAccountId))
+            return awsAccountIds;
+        return [opts.AwsAccountId, .. awsAccountIds];
     }
 }

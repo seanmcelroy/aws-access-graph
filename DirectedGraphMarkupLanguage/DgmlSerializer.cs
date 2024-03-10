@@ -20,7 +20,7 @@ namespace AwsAccessGraph.DirectedGraphMarkupLanguage
 {
     public static class DgmlSerializer
     {
-        public static void Serialize(Stream stream, List<Node> nodes, List<Edge<Node, string>> edges)
+        public static void Serialize(Stream stream, List<Node> nodes, List<IEdge<Node>> edges)
         {
             var dg = new DirectedGraph
             {
@@ -45,7 +45,7 @@ namespace AwsAccessGraph.DirectedGraphMarkupLanguage
                 {
                     Source = e.Source.Arn,
                     Target = e.Destination.Arn,
-                    Label = e.EdgeData
+                    Label = e.ToString() ?? "<MISSING_LABEL>"
                 }).ToList()
             };
 
@@ -53,7 +53,7 @@ namespace AwsAccessGraph.DirectedGraphMarkupLanguage
             writer.Serialize(stream, dg);
         }
 
-        public static void Write(string dgmlPath, List<Node> nodes, List<Edge<Node, string>> edges)
+        public static void Write(string dgmlPath, List<Node> nodes, List<IEdge<Node>> edges)
         {
             using var fs = new FileStream(dgmlPath, new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None, Options = FileOptions.None });
             Serialize(fs, nodes, edges);

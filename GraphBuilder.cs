@@ -14,6 +14,7 @@ You should have received a copy of the GNU Affero General Public License along w
 aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 */
 
+using System.IO.Compression;
 using Amazon.IdentityManagement.Model;
 using Amazon.IdentityStore.Model;
 using Amazon.SSOAdmin.Model;
@@ -24,7 +25,7 @@ namespace AwsAccessGraph
 {
     public static class GraphBuilder
     {
-        public static (List<Node> nodes, List<Edge<Node, string>> edges) BuildAws(
+        public static (List<Node> nodes, List<IEdge<Node>> edges) BuildAws(
             IEnumerable<GroupDetail> awsGroups,
             IEnumerable<ManagedPolicyDetail> awsPolicies,
             IEnumerable<RoleDetail> awsRoles,
@@ -79,7 +80,7 @@ namespace AwsAccessGraph
             // ### Generate graph ###
             // ######################
             var nodes = new List<Node>();
-            var edges = new List<Edge<Node, string>>();
+            var edges = new List<IEdge<Node>>();
 
             // Add AWS services to graph
             foreach (var servicePrefix in policyAnalyses.SelectMany(s => s.Value.Stanzas.Select(t => t.Service.ToLowerInvariant())).Distinct())
@@ -111,13 +112,15 @@ namespace AwsAccessGraph
 
                 // Add directed edges from this managed policy to applicable services.
                 var ct = 0;
-                foreach (var servicePrefix in p.Value.Stanzas.Select(pp => pp.Service).Distinct())
+
+                var distinctServices = p.Value.Stanzas.Select(s => s.Service).Distinct();
+                foreach (var distinctService in distinctServices)
                 {
                     var serviceNode = nodes.Single(n =>
                         n.Type.Equals(NodeType.AwsService)
-                        && string.Compare(n.Arn, servicePrefix, StringComparison.OrdinalIgnoreCase) == 0);
+                        && string.Compare(n.Arn, distinctService, StringComparison.OrdinalIgnoreCase) == 0);
 
-                    edges.Add(new Edge<Node, string>(policyNode, serviceNode, "references"));
+                    edges.Add(new Edge<Node, PolicyAnalyzerResult>(policyNode, serviceNode, p.Value.SubsetForService(distinctService)));
                     ct++;
                 }
                 if (noPruneUnrelatedNodes || ct > 0)
@@ -165,14 +168,15 @@ namespace AwsAccessGraph
                         var result = PolicyAnalyzer.Analyze(inlinePolicyNode.Arn, Uri.UnescapeDataString(inlinePolicy.PolicyDocument), awsRoles, limitToAwsServicePrefixes);
 
                         // Add directed edges from this policy to applicable services.
-                        foreach (var servicePrefix in result.Stanzas.Select(pp => pp.Service).Distinct())
+                        var distinctServices = result.Stanzas.Select(s => s.Service).Distinct();
+                        foreach (var distinctService in distinctServices)
                         {
                             var serviceNode = nodes.SingleOrDefault(n =>
                                 n.Type.Equals(NodeType.AwsService)
-                                && string.Compare(n.Arn, servicePrefix, StringComparison.OrdinalIgnoreCase) == 0);
+                                && string.Compare(n.Arn, distinctService, StringComparison.OrdinalIgnoreCase) == 0);
                             if (serviceNode != default)
                             {
-                                edges.Add(new Edge<Node, string>(inlinePolicyNode, serviceNode, "references"));
+                                edges.Add(new Edge<Node, PolicyAnalyzerResult>(inlinePolicyNode, serviceNode, result.SubsetForService(distinctService)));
                                 ct2++;
                             }
                         }
@@ -229,14 +233,15 @@ namespace AwsAccessGraph
 
                     // Add directed edges from this policy to applicable services.
                     var ct2 = 0;
-                    foreach (var servicePrefix in result.Stanzas.Select(pp => pp.Service).Distinct())
+                    var distinctServices = result.Stanzas.Select(s => s.Service).Distinct();
+                    foreach (var distinctService in distinctServices)
                     {
                         var serviceNode = nodes.SingleOrDefault(n =>
                             n.Type.Equals(NodeType.AwsService)
-                            && string.Compare(n.Arn, servicePrefix, StringComparison.OrdinalIgnoreCase) == 0);
+                            && string.Compare(n.Arn, distinctService, StringComparison.OrdinalIgnoreCase) == 0);
                         if (serviceNode != default)
                         {
-                            edges.Add(new Edge<Node, string>(inlinePolicyNode, serviceNode, "references"));
+                            edges.Add(new Edge<Node, PolicyAnalyzerResult>(inlinePolicyNode, serviceNode, result.SubsetForService(distinctService)));
                             ct2++;
                         }
                     }
@@ -270,7 +275,7 @@ namespace AwsAccessGraph
                         && psa.PrincipalId == g.GroupId)
                     .Select(psa => psa.PermissionSetArn))
                 {
-                    var permissionSetNode = nodes.SingleOrDefault(n =>
+                    var permissionSetNode = nodes.Distinct().SingleOrDefault(n =>
                         n.Type.Equals(NodeType.AwsPermissionSet)
                         && string.Compare(n.Arn, psArn, StringComparison.OrdinalIgnoreCase) == 0);
 
@@ -324,14 +329,15 @@ namespace AwsAccessGraph
 
                     // Add directed edges from this policy to applicable services.
                     var ct2 = 0;
-                    foreach (var servicePrefix in result.Stanzas.Select(pp => pp.Service).Distinct())
+                    var distinctServices = result.Stanzas.Select(s => s.Service).Distinct();
+                    foreach (var distinctService in distinctServices)
                     {
                         var serviceNode = nodes.SingleOrDefault(n =>
                             n.Type.Equals(NodeType.AwsService)
-                            && string.Compare(n.Arn, servicePrefix, StringComparison.OrdinalIgnoreCase) == 0);
+                            && string.Compare(n.Arn, distinctService, StringComparison.OrdinalIgnoreCase) == 0);
                         if (serviceNode != default)
                         {
-                            edges.Add(new Edge<Node, string>(inlinePolicyNode, serviceNode, "references"));
+                            edges.Add(new Edge<Node, PolicyAnalyzerResult>(inlinePolicyNode, serviceNode, result.SubsetForService(distinctService)));
                             ct2++;
                         }
                     }
@@ -401,14 +407,15 @@ namespace AwsAccessGraph
 
                     // Add directed edges from this policy to applicable services.
                     var ct2 = 0;
-                    foreach (var servicePrefix in result.Stanzas.Select(pp => pp.Service).Distinct())
+                    var distinctServices = result.Stanzas.Select(s => s.Service).Distinct();
+                    foreach (var distinctService in distinctServices)
                     {
                         var serviceNode = nodes.SingleOrDefault(n =>
                             n.Type.Equals(NodeType.AwsService)
-                            && string.Compare(n.Arn, servicePrefix, StringComparison.OrdinalIgnoreCase) == 0);
+                            && string.Compare(n.Arn, distinctService, StringComparison.OrdinalIgnoreCase) == 0);
                         if (serviceNode != default)
                         {
-                            edges.Add(new Edge<Node, string>(inlinePolicyNode, serviceNode, "references"));
+                            edges.Add(new Edge<Node, PolicyAnalyzerResult>(inlinePolicyNode, serviceNode, result.SubsetForService(distinctService)));
                             ct2++;
                         }
                     }
@@ -475,7 +482,7 @@ namespace AwsAccessGraph
 
                         // Can these roles be assumed by principals attached to this policy, though?  If so, they'd be provided for in the trust policy.
                         var rolesWithThisPolicyAttached = edges.FindRolesAttachedTo(pn.Single()).Select(x => x.source).ToArray();
-                        if (!rolesWithThisPolicyAttached.Any())
+                        if (rolesWithThisPolicyAttached.Length == 0)
                         {
                             if (verbose) Console.Error.WriteLine($"\t\tBut is not attached to any roles.");
                             continue;
@@ -597,17 +604,24 @@ namespace AwsAccessGraph
                             ogm.Item2,
                             oktaGroupNode,
                             "memberOf"
-                        )));
+                        ))
+                        .Select(x => (IEdge<Node>)x));
                 }
             }
 
             // Add applicable Identity Store users and related edges to graph
             var identityStoreUserNodes = nodes
                 .Where(n => n.Type.Equals(NodeType.AwsIdentityStoreGroup))
+                .Distinct()
                 .SelectMany(n => identityStoreGroupMemberships[n.Arn!])
                 .Select(n => n.MemberId.UserId)
                 .Distinct()
-                .Select(u => identityStoreUsers.SingleOrDefault(isu => string.Compare(isu.UserId, u, StringComparison.OrdinalIgnoreCase) == 0))
+                .Select(u => identityStoreUsers
+                    .Distinct()
+                    .FirstOrDefault(isu =>  // TODO: Should be SingleOrDefault()
+                        string.Compare(isu.UserId, u, StringComparison.OrdinalIgnoreCase) == 0
+                    )
+                )
                 .Where(u => u != null)
                 .Select(u => new Node
                 {
@@ -630,7 +644,8 @@ namespace AwsAccessGraph
                             gm.Item2,
                             identityStoreGroupNode,
                             "memberOf"
-                        )));
+                        ))
+                        .Select(x => (IEdge<Node>)x));
                 }
             }
 

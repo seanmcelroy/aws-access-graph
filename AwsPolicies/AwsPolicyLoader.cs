@@ -14,17 +14,13 @@ You should have received a copy of the GNU Affero General Public License along w
 aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 */
 
-using System.Runtime.Intrinsics.Arm;
 using System.Text.Json;
-using Amazon;
 using Amazon.IdentityManagement;
 using Amazon.IdentityManagement.Model;
 using Amazon.IdentityStore;
 using Amazon.IdentityStore.Model;
-using Amazon.SecurityToken;
 using Amazon.SSOAdmin;
 using Amazon.SSOAdmin.Model;
-using Polly.CircuitBreaker;
 using static AwsAccessGraph.Constants;
 
 namespace AwsAccessGraph.AwsPolicies
@@ -53,10 +49,13 @@ namespace AwsAccessGraph.AwsPolicies
             List<AccountAssignment> permissionSetAssignments,
             string actualAwsAccountId
             )> LoadAwsPolicyAsync(
-                string? awsAccessKeyId,
-                string? awsSecretAccessKey,
-                string? awsSessionToken,
-                string? awsAccountId,
+                Func<(
+                    string? awsAccessKeyId,
+                    string? awsSecretAccessKey,
+                    string? awsSessionToken,
+                    string? awsAccountIdArg,
+                    ExitCodes? exitCode)> awsCredentialLoader,
+                string awsAccountId,
                 string outputDirectory,
                 bool forceRefresh,
                 bool noFiles,
@@ -64,20 +63,23 @@ namespace AwsAccessGraph.AwsPolicies
         {
             var actualAwsAccountId = new string(awsAccountId);
 
-            var stsClientFactory = Globals.GetStsClientFactory(awsAccessKeyId, awsSecretAccessKey, awsSessionToken);
+            var stsClientFactory = Globals.GetStsClientFactory(awsCredentialLoader);
             var iamClientFactory = new Lazy<AmazonIdentityManagementServiceClient>(() =>
             {
                 Console.Error.Write("Getting IAM client... ");
+                var (awsAccessKeyId, awsSecretAccessKey, awsSessionToken, awsAccountIdArg, exitCode) = awsCredentialLoader();
+                if (exitCode != null)
+                    Environment.Exit((int)exitCode);
 
                 if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
                    || string.IsNullOrWhiteSpace(awsSecretAccessKey))
                    && string.IsNullOrWhiteSpace(awsSessionToken))
                 {
                     Console.Error.WriteLine("Error creating IAM client: AWS credentials were not provided.");
-                    System.Environment.Exit((int)ExitCodes.AwsCredentialsNotSpecified);
+                    Environment.Exit((int)ExitCodes.AwsCredentialsNotSpecified);
                 }
 
-                var iam = new Amazon.IdentityManagement.AmazonIdentityManagementServiceClient(
+                var iam = new AmazonIdentityManagementServiceClient(
                     awsAccessKeyId,
                     awsSecretAccessKey,
                     awsSessionToken);
@@ -109,6 +111,7 @@ namespace AwsAccessGraph.AwsPolicies
             {
                 Console.Error.Write("Getting SSO Admin (Identity Center) client... ");
 
+                var (awsAccessKeyId, awsSecretAccessKey, awsSessionToken, awsAccountIdArg, exitCode) = awsCredentialLoader();
                 if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
                    || string.IsNullOrWhiteSpace(awsSecretAccessKey))
                    && string.IsNullOrWhiteSpace(awsSessionToken))
@@ -129,13 +132,13 @@ namespace AwsAccessGraph.AwsPolicies
             var identityStoreClientFactory = new Lazy<AmazonIdentityStoreClient>(() =>
             {
                 Console.Error.Write("Getting Identity Store client... ");
-
+                var (awsAccessKeyId, awsSecretAccessKey, awsSessionToken, awsAccountIdArg, exitCode) = awsCredentialLoader();
                 if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
                    || string.IsNullOrWhiteSpace(awsSecretAccessKey))
                    && string.IsNullOrWhiteSpace(awsSessionToken))
                 {
                     Console.Error.WriteLine("Error creating Identity Store client: AWS credentials were not provided.");
-                    System.Environment.Exit((int)ExitCodes.AwsCredentialsNotSpecified);
+                    Environment.Exit((int)ExitCodes.AwsCredentialsNotSpecified);
                 }
 
                 var identityStoreClient = new AmazonIdentityStoreClient(
@@ -228,10 +231,10 @@ namespace AwsAccessGraph.AwsPolicies
                     || userList == null)
                 {
                     // None of this was read from cache, so read fresh if we can.
-                    groupList ??= [];
-                    policyList ??= [];
-                    roleList ??= [];
-                    userList ??= [];
+                    groupList = [];
+                    policyList = [];
+                    roleList = [];
+                    userList = [];
                     var more = false;
                     string? marker = null;
                     iamClient ??= iamClientFactory.Value;
@@ -272,7 +275,7 @@ namespace AwsAccessGraph.AwsPolicies
                 if (samlIdpList == null)
                 {
                     // None of this was read from cache, so read fresh if we can.
-                    samlIdpList ??= [];
+                    samlIdpList = [];
                     iamClient ??= iamClientFactory.Value;
                     var response = await iamClient.ListSAMLProvidersAsync(new ListSAMLProvidersRequest(), cancellationToken);
                     samlIdpList.AddRange(response.SAMLProviderList);
@@ -303,6 +306,13 @@ namespace AwsAccessGraph.AwsPolicies
                     || identityStoreGroupMemberships == null
                     || permissionSetAssignments == null)
                 {
+                    permissionSetList = [];
+                    permissionSetManagedPolicies = [];
+                    permissionSetInlinePolicies = [];
+                    identityStoreUsers = [];
+                    identityStoreGroups = [];
+                    identityStoreGroupMemberships = [];
+                    permissionSetAssignments = [];
                     identityCenterClient ??= identityCenterClientFactory.Value;
                     identityStoreClient ??= identityStoreClientFactory.Value;
 
@@ -331,7 +341,6 @@ namespace AwsAccessGraph.AwsPolicies
 
                                     more = idsUserResponse.NextToken != null;
                                     nextToken = idsUserResponse.NextToken;
-                                    identityStoreUsers ??= [];
                                     identityStoreUsers.AddRange(idsUserResponse.Users);
                                 } while (more && !cancellationToken.IsCancellationRequested);
                                 Console.Error.WriteLine($"\t[\u2713] {identityStoreUsers.Count} users retrieved for identity store {ici.IdentityStoreId}.");
@@ -349,7 +358,6 @@ namespace AwsAccessGraph.AwsPolicies
 
                                     more = idsGroupResponse.NextToken != null;
                                     nextToken = idsGroupResponse.NextToken;
-                                    identityStoreGroups ??= [];
                                     identityStoreGroups.AddRange(idsGroupResponse.Groups);
                                 } while (more && !cancellationToken.IsCancellationRequested);
                                 Console.Error.WriteLine($"\t[\u2713] {identityStoreGroups.Count} groups retrieved for identity store {ici.IdentityStoreId}.");
@@ -373,7 +381,6 @@ namespace AwsAccessGraph.AwsPolicies
                                         nextToken = groupMembershipsResponse.NextToken;
 
                                         var members = groupMembershipsResponse.GroupMemberships;
-                                        identityStoreGroupMemberships ??= [];
                                         if (identityStoreGroupMemberships.TryGetValue(g.GroupId, out GroupMembership[]? membersExisting))
                                         {
                                             var z = new GroupMembership[membersExisting.Length + members.Count];
@@ -413,7 +420,6 @@ namespace AwsAccessGraph.AwsPolicies
                                         PermissionSetArn = psArn,
                                         InstanceArn = ici.InstanceArn
                                     }, cancellationToken);
-                                    permissionSetList ??= [];
                                     permissionSetList.Add(pResponse.PermissionSet);
 
                                     // Managed policies attached to a permission set
@@ -430,7 +436,6 @@ namespace AwsAccessGraph.AwsPolicies
 
                                         more = managedPoliciesResponse.NextToken != null;
                                         nextToken = managedPoliciesResponse.NextToken;
-                                        permissionSetManagedPolicies ??= [];
                                         var managedPolicies = managedPoliciesResponse.AttachedManagedPolicies.Select(m => m.Arn).ToList();
                                         if (permissionSetManagedPolicies.TryGetValue(psArn, out string[]? managedPoliciesExisting))
                                         {
@@ -459,7 +464,6 @@ namespace AwsAccessGraph.AwsPolicies
 
                                         more = customerPoliciesResponse.NextToken != null;
                                         nextToken = customerPoliciesResponse.NextToken;
-                                        permissionSetInlinePolicies ??= [];
                                         foreach (var ip in customerPoliciesResponse.CustomerManagedPolicyReferences)
                                         {
                                             var policyDocument = await identityCenterClient.GetInlinePolicyForPermissionSetAsync(new GetInlinePolicyForPermissionSetRequest
@@ -502,7 +506,6 @@ namespace AwsAccessGraph.AwsPolicies
 
                                         more = icAccountAssignmentsResponse.NextToken != null;
                                         nextToken = icAccountAssignmentsResponse.NextToken;
-                                        permissionSetAssignments ??= [];
                                         permissionSetAssignments.AddRange(icAccountAssignmentsResponse.AccountAssignments);
                                     } while (more && !cancellationToken.IsCancellationRequested);
                                 }

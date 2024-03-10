@@ -47,6 +47,8 @@ namespace AwsAccessGraph.AwsPolicies
             var assumeRoleTargets = new List<RoleArn>();
             foreach (var stmt in policy.Statement)
             {
+                var deny = string.Compare(stmt.Effect, "Deny", StringComparison.OrdinalIgnoreCase) == 0;
+
                 if (stmt.Action != null)
                 {
                     // Some policies that deny based on condition block only would have no action block.
@@ -56,7 +58,7 @@ namespace AwsAccessGraph.AwsPolicies
                         {
                             stanzas.Add(new PolicyStanza
                             {
-                                Deny = string.Compare(stmt.Effect, "Deny", StringComparison.OrdinalIgnoreCase) == 0,
+                                Deny = deny,
                                 Write = true,
                                 Service = "*"
                             });
@@ -76,8 +78,12 @@ namespace AwsAccessGraph.AwsPolicies
                         var readOnly = false;
                         if (actionParts[1].StartsWith("Describe", StringComparison.OrdinalIgnoreCase)
                             || actionParts[1].StartsWith("Get", StringComparison.OrdinalIgnoreCase)
-                            || actionParts[1].StartsWith("List", StringComparison.OrdinalIgnoreCase))
+                            || actionParts[1].StartsWith("List", StringComparison.OrdinalIgnoreCase)
+                            || actionParts[1].StartsWith("Search", StringComparison.OrdinalIgnoreCase)
+                            )
                             readOnly = true;
+                        else
+                            readOnly = false;
 
                         // Is this an AssumeRole?
                         if (string.Compare(action, "sts:AssumeRole", StringComparison.OrdinalIgnoreCase) == 0)
@@ -97,14 +103,15 @@ namespace AwsAccessGraph.AwsPolicies
                         //    awsService = $"UNKNOWN {actionParts[0]}";
 
                         if (limitToAwsServicePrefixes == null
-                            || !limitToAwsServicePrefixes.Any()
+                            || limitToAwsServicePrefixes.Length == 0
                             || limitToAwsServicePrefixes.Any(p => string.Compare(actionParts[0], p, StringComparison.OrdinalIgnoreCase) == 0))
                         {
                             stanzas.Add(new PolicyStanza
                             {
-                                Deny = string.Compare(stmt.Effect, "Deny", StringComparison.OrdinalIgnoreCase) == 0,
+                                Deny = deny,
                                 Write = !readOnly,
-                                Service = actionParts[0].ToLowerInvariant() //awsService
+                                Service = actionParts[0].ToLowerInvariant(), //awsService
+                                ServiceActions = actionParts
                             });
                         }
                     }

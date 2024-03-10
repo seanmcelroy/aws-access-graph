@@ -15,6 +15,7 @@ aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 using Amazon.SecurityToken;
+using static AwsAccessGraph.Constants;
 
 namespace AwsAccessGraph
 {
@@ -24,11 +25,18 @@ namespace AwsAccessGraph
         private static Lazy<AmazonSecurityTokenServiceClient>? _stsClientFactory;
 
         public static Lazy<AmazonSecurityTokenServiceClient>? GetStsClientFactory(
-            string? awsAccessKeyId,
-            string? awsSecretAccessKey,
-            string? awsSessionToken
+            Func<(
+                string? awsAccessKeyId,
+                string? awsSecretAccessKey,
+                string? awsSessionToken,
+                string? awsAccountIdArg,
+                ExitCodes? exitCode)> awsCredentialLoader
         )
         {
+            var (awsAccessKeyId, awsSecretAccessKey, awsSessionToken, awsAccountIdArg, exitCode) = awsCredentialLoader();
+            if (exitCode != null)
+                Environment.Exit((int)exitCode);
+
             if (_stsClientFactory == null)
             {
                 if ((string.IsNullOrWhiteSpace(awsAccessKeyId)
