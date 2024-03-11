@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1 - 2024-03-10
+
+### Changed
+
+- Minor improvements to console output.
+
 ## 1.2.0 - 2024-03-10
 
 ### Added

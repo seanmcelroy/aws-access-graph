@@ -16,6 +16,7 @@ aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Amazon.Runtime;
 using Amazon.Runtime.CredentialManagement;
 using AwsAccessGraph;
@@ -219,7 +220,7 @@ internal class Program
                         var newEdge = Activator.CreateInstance(edgeType, sourceNode, destNode, e.EdgeData);
                         return newEdge;
                     })
-                    .Where(e => !e.Equals(default(Edge<Node, string>)))
+                    .Where(e => !e!.Equals(default(Edge<Node, string>)))
                     .ToList();
                 if (allEdges.Count != dedupedEdges.Count)
                     Console.WriteLine($"Deduped {allEdges.Count} edges into {dedupedEdges.Count} edges.");
@@ -252,12 +253,12 @@ internal class Program
                 // Authorization text reports (console or standard out)
                 if (opts.OutputTextReport)
                 {
-                    Console.Error.WriteLine("Writing authorization text report... ");
+                    Console.Error.WriteLine("Writing authorization text reports... ");
                     var dotPath = Path.Combine(outputPath, "graph.dot");
                     var (ignoredIdentities, ignoredPaths) = await WriteAuthorizationReports(actualAwsAccountIds, allNodes, allEdges, outputPath, opts, cts.Token);
                     if (ignoredPaths > 0)
                         Console.Error.WriteLine($"\tIgnored {ignoredPaths} paths across {ignoredIdentities} identities according to {IgnoreRecords.Count} specified ignore rules.");
-                    Console.Error.WriteLine("Writing authorization text report... [\u2713]");
+                    Console.Error.WriteLine("..Wrote authorization text reports... [\u2713]");
                 }
 
                 Console.Out.WriteLine($"{Environment.NewLine}Done.");
@@ -421,39 +422,63 @@ internal class Program
     {
         string[] awsAccountIds = [];
 
-        var files = Directory.GetFiles(dbPath, "aws-*-list.json", new EnumerationOptions { IgnoreInaccessible = true });
-        if (files.Length != 0)
+        // If an AWS creds are specified as actual command line arguments, presume we will be reading account number using it.
+        var readAccountFromSts = false;
+        if (!string.IsNullOrWhiteSpace(opts.AwsAccessKeyId)
+            || !string.IsNullOrWhiteSpace(opts.AwsSecretAccessKey)
+            || !string.IsNullOrWhiteSpace(opts.AwsSessionToken)
+            || !string.IsNullOrWhiteSpace(opts.AwsProfileName))
         {
-            awsAccountIds = files
-                .Select(f => System.Text.RegularExpressions.Regex.Match(f, "aws-(?<aid>\\d{12})-").Groups["aid"].Value)
-                .Distinct()
-                .Where(a =>
-                    files.Any(f => f.IndexOf($"aws-{a}-group-list.json") > -1)
-                    && files.Any(f => f.IndexOf($"aws-{a}-policy-list.json") > -1)
-                    && files.Any(f => f.IndexOf($"aws-{a}-role-list.json") > -1)
-                    && files.Any(f => f.IndexOf($"aws-{a}-saml-idp-list.json") > -1)
-                    && files.Any(f => f.IndexOf($"aws-{a}-user-list.json") > -1)
-                )
-                .ToArray();
-
-            if (string.IsNullOrWhiteSpace(opts.AwsAccountId) && awsAccountIds.Length > 0)
-                Console.Error.WriteLine($"No AWS Account ID argument was specified, but {awsAccountIds.Length} were found with cached DbPath files, so using those.");
+            if (opts.Verbose)
+                Console.Error.WriteLine("VERBOSE: Because credentials were specified as command line arguments, attempting to read account number using them.");
+            var stsClient = Globals.GetStsClientFactory(awsCredentialLoader)!;
+            if (stsClient != null)
+            {
+                var identity = await stsClient.Value.GetCallerIdentityAsync(new Amazon.SecurityToken.Model.GetCallerIdentityRequest(), cancellationToken);
+                awsAccountIds = [.. awsAccountIds, identity.Account];
+                readAccountFromSts = true;
+            }
         }
 
-        var forceRefresh = opts.Refresh || opts.RefreshAws || (string.IsNullOrWhiteSpace(opts.AwsAccountId) && awsAccountIds.Length == 0);
-        if (forceRefresh)
+        if (awsAccountIds.Length == 0 && !string.IsNullOrWhiteSpace(opts.AwsAccountId))
+            awsAccountIds = [opts.AwsAccountId];
+
+        // Deduce from local file cache
+        if (awsAccountIds.Length == 0)
+        {
+            var files = Directory.GetFiles(dbPath, "aws-*-list.json", new EnumerationOptions { IgnoreInaccessible = true });
+            if (files.Length != 0)
+            {
+                awsAccountIds = files
+                    .Select(f => Regex.Match(f, "aws-(?<aid>\\d{12})-").Groups["aid"].Value)
+                    .Distinct()
+                    .Where(a =>
+                        files.Any(f => f.IndexOf($"aws-{a}-group-list.json") > -1)
+                        && files.Any(f => f.IndexOf($"aws-{a}-policy-list.json") > -1)
+                        && files.Any(f => f.IndexOf($"aws-{a}-role-list.json") > -1)
+                        && files.Any(f => f.IndexOf($"aws-{a}-saml-idp-list.json") > -1)
+                        && files.Any(f => f.IndexOf($"aws-{a}-user-list.json") > -1)
+                    )
+                    .ToArray();
+
+                if (string.IsNullOrWhiteSpace(opts.AwsAccountId) && awsAccountIds.Length > 0)
+                    Console.Error.WriteLine($"No AWS Account ID argument was specified, but {awsAccountIds.Length} were found with cached DbPath files, so using those.");
+            }
+        }
+
+        var forceRefresh = opts.Refresh || opts.RefreshAws;
+        if (forceRefresh && !readAccountFromSts)
         {
             var stsClient = Globals.GetStsClientFactory(awsCredentialLoader)!;
             if (stsClient != null)
             {
                 var identity = await stsClient.Value.GetCallerIdentityAsync(new Amazon.SecurityToken.Model.GetCallerIdentityRequest(), cancellationToken);
                 awsAccountIds = [.. awsAccountIds, identity.Account];
+                readAccountFromSts = true;
             }
         }
 
-        if (string.IsNullOrWhiteSpace(opts.AwsAccountId))
-            return awsAccountIds;
-        return [opts.AwsAccountId, .. awsAccountIds];
+        return awsAccountIds;
     }
 
     public static async Task<(int ignoredIdentities, int ignoredPaths)> WriteAuthorizationReports(
@@ -529,11 +554,31 @@ internal class Program
                     }
 
                     bool readOnly = true;
+                    //List<string> resources = [];
                     foreach (var e in path)
                     {
                         if (e.EdgeData is PolicyAnalyzerResult result)
+                        {
                             readOnly = result.ReadOnly(servicePrefix);
+                            /*resources.AddRange(result.Stanzas
+                                .Where(s => !s.Deny && s.Resources != null)
+                                .SelectMany(s => s.Resources!)
+                                .Select(r => Amazon.Arn.IsArn(r)
+                                    ? Amazon.Arn.Parse(r).Resource
+                                    : r)
+                                .Where(r =>
+                                    r.Length > 1
+                                    && !Regex.IsMatch(r, "[a-z0-9\\-]+/\\*") // resource-name/* like key-pair/* and instance/*.  Don't count 'any'
+                                    && string.CompareOrdinal(r, "user/${aws:userid}") != 0 // Don't count users editing themselves.
+                                ));*/
+                        }
                     };
+
+                    /*if (resources.Count > 0)
+                    {
+                        Console.Write(resources.Distinct().Aggregate((c, n) => $"{c},{n}"));
+                    }*/
+
                     string finalServiceString = $"{pathNodeName(targetService)}{(readOnly ? string.Empty : "(WRITE)")}";
 
                     var shouldIgnore = false;
@@ -587,6 +632,9 @@ internal class Program
                             Console.Error.WriteLine($"\tVERBOSE: Ignore rule ({matchedIgnore.Value.Identity},{matchedIgnore.Value.Service}) matched for: {finalPathString}");
                         continue; // to next path for this user
                     }
+
+                    // Add resources...
+
 
                     if (!identityHeaderRecordPrinted)
                     {

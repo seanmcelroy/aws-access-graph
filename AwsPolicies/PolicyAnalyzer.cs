@@ -86,9 +86,10 @@ namespace AwsAccessGraph.AwsPolicies
                             readOnly = false;
 
                         // Is this an AssumeRole?
-                        if (string.Compare(action, "sts:AssumeRole", StringComparison.OrdinalIgnoreCase) == 0)
+                        if (string.Compare(action, "sts:AssumeRole", StringComparison.OrdinalIgnoreCase) == 0
+                            && stmt.Resource != null)
                         {
-                            if (stmt.Resource.IsAny)
+                            if (stmt.Resource.IsAny == true)
                                 assumeRoleTargets.AddRange(roleList.Select(r => r.Arn));
                             else
                             {
@@ -111,7 +112,8 @@ namespace AwsAccessGraph.AwsPolicies
                                 Deny = deny,
                                 Write = !readOnly,
                                 Service = actionParts[0].ToLowerInvariant(), //awsService
-                                ServiceActions = actionParts
+                                ServiceActions = actionParts,
+                                Resources = stmt.Resource == null ? null : (stmt.Resource.IsAny ? null : [.. stmt.Resource])
                             });
                         }
                     }

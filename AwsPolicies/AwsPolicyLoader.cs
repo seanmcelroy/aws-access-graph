@@ -239,6 +239,8 @@ namespace AwsAccessGraph.AwsPolicies
                     string? marker = null;
                     iamClient ??= iamClientFactory.Value;
 
+                    Console.Error.WriteLine($"Reading data from GetAccountAuthorizationDetailsAsync.  In large accounts, this could take a few minutes...");
+                    int page = 1;
                     do
                     {
                         var response = await iamClient.GetAccountAuthorizationDetailsAsync(new GetAccountAuthorizationDetailsRequest
@@ -254,6 +256,10 @@ namespace AwsAccessGraph.AwsPolicies
                         policyList.AddRange(response.Policies.Except(policyList));
                         roleList.AddRange(response.RoleDetailList.Except(roleList));
                         userList.AddRange(response.UserDetailList.Except(userList));
+
+                        if (more)
+                            Console.Error.WriteLine($"\tProcessed page {page}... ");
+                        page++;
 
                     } while (more && !cancellationToken.IsCancellationRequested);
                     Console.Error.WriteLine($"[\u2713] {groupList.Count} groups, {policyList.Count} policies, {roleList.Count} roles, {userList.Count} users read from AWS API.");
@@ -323,6 +329,7 @@ namespace AwsAccessGraph.AwsPolicies
                     }
                     else
                     {
+                        var icErrorAndNoWriteCache = false;
                         foreach (var ici in icInstancesResponse.Instances)
                         {
                             Console.Error.WriteLine($"Identity Center {ici.InstanceArn} located in {actualAwsAccountId} (owner={ici.OwnerAccountId}).  This will take a moment..");
@@ -420,7 +427,7 @@ namespace AwsAccessGraph.AwsPolicies
                                         PermissionSetArn = psArn,
                                         InstanceArn = ici.InstanceArn
                                     }, cancellationToken);
-                                    permissionSetList.Add(pResponse.PermissionSet);
+                                    permissionSetList!.Add(pResponse.PermissionSet);
 
                                     // Managed policies attached to a permission set
                                     more = false;
@@ -437,7 +444,7 @@ namespace AwsAccessGraph.AwsPolicies
                                         more = managedPoliciesResponse.NextToken != null;
                                         nextToken = managedPoliciesResponse.NextToken;
                                         var managedPolicies = managedPoliciesResponse.AttachedManagedPolicies.Select(m => m.Arn).ToList();
-                                        if (permissionSetManagedPolicies.TryGetValue(psArn, out string[]? managedPoliciesExisting))
+                                        if (permissionSetManagedPolicies!.TryGetValue(psArn, out string[]? managedPoliciesExisting))
                                         {
                                             var z = new string[managedPoliciesExisting.Length + managedPolicies.Count];
                                             managedPoliciesExisting.CopyTo(z, 0);
@@ -480,7 +487,7 @@ namespace AwsAccessGraph.AwsPolicies
                                             });
                                         }
 
-                                        if (permissionSetInlinePolicies.TryGetValue(psArn, out PermissionSetInlinePolicy[]? inlinePoliciesExisting))
+                                        if (permissionSetInlinePolicies!.TryGetValue(psArn, out PermissionSetInlinePolicy[]? inlinePoliciesExisting))
                                         {
                                             var z = new PermissionSetInlinePolicy[inlinePoliciesExisting.Length + inlinePolicies.Count];
                                             inlinePoliciesExisting.CopyTo(z, 0);
@@ -506,19 +513,21 @@ namespace AwsAccessGraph.AwsPolicies
 
                                         more = icAccountAssignmentsResponse.NextToken != null;
                                         nextToken = icAccountAssignmentsResponse.NextToken;
-                                        permissionSetAssignments.AddRange(icAccountAssignmentsResponse.AccountAssignments);
+                                        permissionSetAssignments!.AddRange(icAccountAssignmentsResponse.AccountAssignments);
                                     } while (more && !cancellationToken.IsCancellationRequested);
                                 }
                             }
                             catch (Amazon.SSOAdmin.Model.AccessDeniedException ade)
                             {
-                                Console.Error.WriteLine($"[X] ERROR reading permission sets read from AWS API for Identity Center {ici.InstanceArn}: {ade.Message}");
+                                Console.Error.WriteLine($"[X] ERROR reading permission sets from AWS API for Identity Center {ici.InstanceArn}: {ade.Message}");
+                                icErrorAndNoWriteCache = true;
                             }
 
-                            Console.Error.WriteLine($"\t[\u2713] {(permissionSetList == null ? 0 : permissionSetList.Count)} permission sets, {(permissionSetManagedPolicies == null ? 0 : permissionSetManagedPolicies.SelectMany(p => p.Value).Count())} managed policy references, {(permissionSetInlinePolicies == null ? 0 : permissionSetInlinePolicies.SelectMany(p => p.Value).Count())} inline policy references, and {(permissionSetAssignments == null ? 0 : permissionSetAssignments.Count())} assignments read from AWS API.");
+                            if (!icErrorAndNoWriteCache)
+                                Console.Error.WriteLine($"\t[\u2713] {(permissionSetList == null ? 0 : permissionSetList.Count)} permission sets, {(permissionSetManagedPolicies == null ? 0 : permissionSetManagedPolicies.SelectMany(p => p.Value).Count())} managed policy references, {(permissionSetInlinePolicies == null ? 0 : permissionSetInlinePolicies.SelectMany(p => p.Value).Count())} inline policy references, and {(permissionSetAssignments == null ? 0 : permissionSetAssignments.Count())} assignments read from AWS API.");
                         }
 
-                        if (!noFiles)
+                        if (!noFiles && !icErrorAndNoWriteCache)
                         {
                             if (!Directory.Exists(outputDirectory))
                                 Directory.CreateDirectory(outputDirectory);

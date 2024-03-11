@@ -30,5 +30,6 @@ namespace AwsAccessGraph
         AwsPermissionSet,
         AwsIdentityStoreUser,
         AwsIdentityStoreGroup,
+        AwsResource,
     }
 }

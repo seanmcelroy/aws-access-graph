@@ -22,7 +22,7 @@ namespace AwsAccessGraph
         public TNode Source { get; } = source;
         public TNode Destination { get; } = destination;
         public TEdgeData EdgeData { get; } = edgeData;
-        object IEdge<TNode>.EdgeData { get => EdgeData; }
+        object IEdge<TNode>.EdgeData { get => EdgeData!; }
 
         public int CompareTo(IEdge<TNode>? other) => other == null
             ? -1

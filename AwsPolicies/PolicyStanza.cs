@@ -23,6 +23,7 @@ namespace AwsAccessGraph.AwsPolicies
         public readonly bool Deny { get; init; }
         public readonly bool Write { get; init; }
         public readonly string Service { get; init; }
-        public readonly string[] ServiceActions { get; init; }
+        public readonly string[]? ServiceActions { get; init; }
+        public readonly string[]? Resources { get; init; }
     }
 }
