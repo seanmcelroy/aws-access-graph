@@ -537,7 +537,11 @@ internal class Program
             using var sw = opts.NoFiles ? null : new StreamWriter(fs!);
             var writer = opts.NoFiles ? Console.Out : sw!;
 
-            await writer.WriteLineAsync($"Report of accesses to {AwsServicePolicyNames[servicePrefix]} generated on {DateTime.UtcNow:O} for account(s) {awsAccountIds.Aggregate((c, n) => c + "," + n)}.");
+            var targeting = string.IsNullOrWhiteSpace(opts.AwsAccountId) || awsAccountIds.All(a => string.CompareOrdinal(a, opts.AwsAccountId) == 0)
+                ? string.Empty
+                : $" targeting account {opts.AwsAccountId}";
+
+            await writer.WriteLineAsync($"Report of accesses to {AwsServicePolicyNames[servicePrefix]} generated on {DateTime.UtcNow:O} for account(s) {awsAccountIds.Aggregate((c, n) => c + "," + n)}{targeting}.");
 
             var reportEdgeList = opts.NoIdentities
                 ? allEdges.FindIdentityGroupsAttachedTo(targetService)
@@ -657,9 +661,11 @@ internal class Program
             }
 
             // Dedupe edges
-            foreach (var edgePath in edgePaths) {
+            foreach (var edgePath in edgePaths)
+            {
                 await writer.WriteLineAsync(edgePath.Key);
-                foreach (var path in edgePath.Value.Distinct()) {
+                foreach (var path in edgePath.Value.Distinct())
+                {
                     await writer.WriteLineAsync(path);
                 }
             }
