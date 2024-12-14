@@ -519,7 +519,7 @@ namespace AwsAccessGraph.AwsPolicies
                             }
                             catch (Amazon.SSOAdmin.Model.AccessDeniedException ade)
                             {
-                                Console.Error.WriteLine($"[X] ERROR reading permission sets from AWS API for Identity Center {ici.InstanceArn}: {ade.Message}");
+                                Console.Error.WriteLine($"[X] ERROR reading permission sets from AWS API for Identity Center ARN: {ici.InstanceArn}\r\nIdentity Center Owner Account: {ici.OwnerAccountId}\r\nMessage: {ade.Message}");
                                 icErrorAndNoWriteCache = true;
                             }
 

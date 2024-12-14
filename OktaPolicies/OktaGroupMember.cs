@@ -20,14 +20,14 @@ namespace AwsAccessGraph.OktaPolicies
     {
         public OktaGroupMember() { }
 
-        public OktaGroupMember(OktaGroup g, Okta.Sdk.Model.User u)
+        public OktaGroupMember(OktaGroup g, Okta.Sdk.Model.GroupMember gm)
         {
-            this.GroupId = g.Id;
-            this.UserId = u.Id;
-            this.Login = u.Profile.Login;
-            this.FirstName = u.Profile.FirstName;
-            this.LastName = u.Profile.LastName;
-            this.ManagerId = u.Profile.ManagerId;
+            GroupId = g.Id;
+            UserId = gm.Id;
+            Login = gm.Profile.Login;
+            FirstName = gm.Profile.FirstName;
+            LastName = gm.Profile.LastName;
+            ManagerId = gm.Profile.ManagerId;
         }
 
         public string? GroupId { get; set; } = null;
@@ -37,13 +37,13 @@ namespace AwsAccessGraph.OktaPolicies
         public string? LastName { get; set; } = null;
         public string? ManagerId { get; set; } = null;
 
-        public bool Equals(OktaGroupMember? other)
+        public readonly bool Equals(OktaGroupMember? other)
         {
             if (other == null)
                 return false;
 
-            return string.Compare(this.GroupId, other.Value.GroupId, StringComparison.OrdinalIgnoreCase) == 0
-                && string.Compare(this.UserId, other.Value.UserId, StringComparison.OrdinalIgnoreCase) == 0
+            return string.Compare(GroupId, other.Value.GroupId, StringComparison.OrdinalIgnoreCase) == 0
+                && string.Compare(UserId, other.Value.UserId, StringComparison.OrdinalIgnoreCase) == 0
             ;
         }
     }

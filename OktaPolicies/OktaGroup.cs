@@ -27,17 +27,17 @@ namespace AwsAccessGraph.OktaPolicies
 
         public OktaGroup(Okta.Sdk.Model.Group g)
         {
-            this.Id = g.Id;
-            this.Name = g.Profile.Name;
+            Id = g.Id;
+            Name = g.Profile.Name;
         }
 
         public string? Id { get; set; } = null;
         public string? Name
         {
-            get { return this._name; }
+            readonly get { return _name; }
             set
             {
-                this._name = value;
+                _name = value;
                 if (value == null)
                     return;
 
@@ -45,8 +45,8 @@ namespace AwsAccessGraph.OktaPolicies
                 if (!m.Success)
                     return;
 
-                this.AwsAccountId = m.Groups["accountid"].Value;
-                this.AwsRoleName = m.Groups["role"].Value;
+                AwsAccountId = m.Groups["accountid"].Value;
+                AwsRoleName = m.Groups["role"].Value;
             }
         }
 
@@ -56,12 +56,12 @@ namespace AwsAccessGraph.OktaPolicies
         [JsonIgnore]
         public string? AwsRoleName { get; set; } = null;
 
-        public bool Equals(OktaGroup? other)
+        public readonly bool Equals(OktaGroup? other)
         {
             if (other == null)
                 return false;
 
-            return string.Compare(this.Id, other.Value.Id, StringComparison.OrdinalIgnoreCase) == 0;
+            return string.Compare(Id, other.Value.Id, StringComparison.OrdinalIgnoreCase) == 0;
         }
     }
 }

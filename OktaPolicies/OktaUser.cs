@@ -35,7 +35,7 @@ namespace AwsAccessGraph.OktaPolicies
         public string? LastName { get; set; } = null;
         public string? ManagerId { get; set; } = null;
 
-        public bool Equals(OktaGroupMember? other)
+        public readonly bool Equals(OktaGroupMember? other)
         {
             if (other == null)
                 return false;

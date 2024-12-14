@@ -98,7 +98,10 @@ namespace AwsAccessGraph
                     Array.Copy(path.ToArray(), 0, pathArray, 1, pathCount);
                 pathArray[0] = dt;
 
-                if (dt.Source is Node node && node.Type.Equals(ancestorNodeType))
+                if (dt.Source is Node node 
+                    && node.Type.Equals(ancestorNodeType)
+                    && (target.AccountId == null || string.CompareOrdinal(node.AccountId, target.AccountId) == 0)
+                )
                 {
                     yield return (dt.Source, pathArray);
                 }

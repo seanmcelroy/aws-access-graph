@@ -71,7 +71,7 @@ The following is an output of the help screen displaying command line
 arguments:
 
 ```
-AWS Access Graph 1.2.0
+AWS Access Graph 1.3.0
 Copyright (C) 2024 Sean McElroy.  All rights reserved.
 
   --aws-profile           If specified, the AWS profile configured by this name in the

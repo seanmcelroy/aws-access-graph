@@ -16,6 +16,7 @@ aws-access-graph. If not, see <https://www.gnu.org/licenses/>.
 
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 using Amazon.Runtime;
 using Amazon.Runtime.CredentialManagement;
@@ -373,7 +374,7 @@ internal class Program
             return (null, null, null, null, ExitCodes.AwsCredentialsNotSpecified);
         }
 
-        return (awsAccessKeyId, awsSecretAccessKey, awsSessionToken, awsAccessKeyId, null);
+        return (awsAccessKeyId, awsSecretAccessKey, awsSessionToken, awsAccountIdArg, null);
     }
 
     public static void ReadConfigurations(string configPath, bool verbose)
@@ -424,10 +425,14 @@ internal class Program
 
         // If an AWS creds are specified as actual command line arguments, presume we will be reading account number using it.
         var readAccountFromSts = false;
-        if (!string.IsNullOrWhiteSpace(opts.AwsAccessKeyId)
-            || !string.IsNullOrWhiteSpace(opts.AwsSecretAccessKey)
-            || !string.IsNullOrWhiteSpace(opts.AwsSessionToken)
-            || !string.IsNullOrWhiteSpace(opts.AwsProfileName))
+        if (string.IsNullOrWhiteSpace(opts.AwsAccountId)
+            && (
+                !string.IsNullOrWhiteSpace(opts.AwsAccessKeyId)
+                || !string.IsNullOrWhiteSpace(opts.AwsSecretAccessKey)
+                || !string.IsNullOrWhiteSpace(opts.AwsSessionToken)
+                || !string.IsNullOrWhiteSpace(opts.AwsProfileName)
+            )
+        )
         {
             if (opts.Verbose)
                 Console.Error.WriteLine("VERBOSE: Because credentials were specified as command line arguments, attempting to read account number using them.");
@@ -532,18 +537,21 @@ internal class Program
             using var sw = opts.NoFiles ? null : new StreamWriter(fs!);
             var writer = opts.NoFiles ? Console.Out : sw!;
 
-            await writer.WriteLineAsync($"Report of accesses to {Constants.AwsServicePolicyNames[servicePrefix]} generated on {DateTime.UtcNow:O} for account(s) {awsAccountIds.Aggregate((c, n) => c + "," + n)}.");
+            await writer.WriteLineAsync($"Report of accesses to {AwsServicePolicyNames[servicePrefix]} generated on {DateTime.UtcNow:O} for account(s) {awsAccountIds.Aggregate((c, n) => c + "," + n)}.");
 
             var reportEdgeList = opts.NoIdentities
                 ? allEdges.FindIdentityGroupsAttachedTo(targetService)
                 : allEdges.FindIdentityPrincipalsAttachedTo(targetService);
 
+            Dictionary<string, List<string>> edgePaths = [];
+            List<string>? currentEdgePath = null;
+
             foreach (var u in reportEdgeList
                 .GroupBy(u => u.source)
                 .OrderBy(u => u.Key.Name))
             {
-                var identityHeaderRecordPrinted = false;
-                var printedForIdentity = 0;
+                currentEdgePath = null;
+
                 foreach (var (source, path) in u)
                 {
                     if (cancellationToken.IsCancellationRequested)
@@ -636,17 +644,25 @@ internal class Program
                     // Add resources...
 
 
-                    if (!identityHeaderRecordPrinted)
+                    if (currentEdgePath == null)
                     {
                         // Do it this way so we don't print a header record if all the paths were ignored.
-                        await writer.WriteLineAsync($"{targetService.Name}: {pathNodeName(u.Key)}");
-                        identityHeaderRecordPrinted = true;
+                        var edgeName = $"{targetService.Name}: {pathNodeName(u.Key)}";
+                        currentEdgePath = [];
+                        edgePaths.Add(edgeName, currentEdgePath);
                     }
-                    await writer.WriteLineAsync($"\tpath: {finalPathString}");
-                    printedForIdentity++;
+
+                    currentEdgePath.Add($"\tpath: {finalPathString}");
                 }
             }
 
+            // Dedupe edges
+            foreach (var edgePath in edgePaths) {
+                await writer.WriteLineAsync(edgePath.Key);
+                foreach (var path in edgePath.Value.Distinct()) {
+                    await writer.WriteLineAsync(path);
+                }
+            }
             await writer.FlushAsync(cancellationToken);
         }
 

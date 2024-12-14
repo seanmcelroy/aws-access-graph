@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.0 - 2024-12-13
+
+### Changed
+
+- Upgraded from .NET 8.0 to .NET 9.0
+- Updated dependencies to latest versions
+
+### Fixed
+
+- Deduping node edges in multiple accounts now works properly
+- Fixed bug where --aws-account-id was not honored when running under Identity Center profile
+
 ## 1.2.1 - 2024-03-10
 
 ### Changed

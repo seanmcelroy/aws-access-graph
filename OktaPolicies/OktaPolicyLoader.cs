@@ -216,7 +216,7 @@ namespace AwsAccessGraph.OktaPolicies
                         }
                     }
                     Console.Error.WriteLine($"[\u2713] {awsGroupUsers.Count} AWS-related groups and {awsGroupUsers.Sum(x => x.Value.Length)} group members read from Okta API.");
-                    if (!noFiles && awsGroupUsers.Any())
+                    if (!noFiles && awsGroupUsers.Count > 0)
                     {
                         if (!Directory.Exists(outputDirectory))
                             Directory.CreateDirectory(outputDirectory);

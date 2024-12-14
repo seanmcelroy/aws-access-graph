@@ -18,9 +18,19 @@ namespace AwsAccessGraph
 {
     public readonly record struct Node : INode, IComparable<Node>, IEquatable<Node>
     {
-        public string Name { get; init; }
-        public NodeType Type { get; init; }
-        public string Arn { get; init; }
+        public required string Name { get; init; }
+        public required NodeType Type { get; init; }
+        public required string Arn { get; init; }
+
+        public string? AccountId
+        {
+            get
+            {
+                if (!Amazon.Arn.TryParse(Arn, out Amazon.Arn arn))
+                    return null;
+                return arn.AccountId;
+            }
+        }
 
         public int CompareTo(Node other)
         {

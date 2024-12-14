@@ -2,27 +2,27 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net9.0</TargetFramework>
     <RootNamespace>aws_access_graph</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyTitle>AWS Access Graph</AssemblyTitle>
-    <Version>1.2.1</Version>
+    <Version>1.3.0</Version>
     <Authors>Sean McElroy</Authors>
     <Copyright>Copyright (C) 2024 Sean McElroy.  All rights reserved.</Copyright>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AWSSDK.IdentityManagement" Version="3.7.300.54" />
-    <PackageReference Include="AWSSDK.IdentityStore" Version="3.7.300.54" />
-    <PackageReference Include="AWSSDK.SecurityToken" Version="3.7.300.55" />
-    <PackageReference Include="AWSSDK.SSO" Version="3.7.300.54" />
-    <PackageReference Include="AWSSDK.SSOAdmin" Version="3.7.302.49" />
-    <PackageReference Include="AWSSDK.SSOOIDC" Version="3.7.301.49" />
+    <PackageReference Include="AWSSDK.IdentityManagement" Version="3.7.403.13" />
+    <PackageReference Include="AWSSDK.IdentityStore" Version="3.7.400.64" />
+    <PackageReference Include="AWSSDK.SecurityToken" Version="3.7.401.13" />
+    <PackageReference Include="AWSSDK.SSO" Version="3.7.400.64" />
+    <PackageReference Include="AWSSDK.SSOAdmin" Version="3.7.400.64" />
+    <PackageReference Include="AWSSDK.SSOOIDC" Version="3.7.400.64" />
     <PackageReference Include="CommandLineParser" Version="2.9.1" />
-    <PackageReference Include="CsvHelper" Version="31.0.2" />
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
-    <PackageReference Include="Okta.Sdk" Version="7.0.5" />
+    <PackageReference Include="CsvHelper" Version="33.0.1" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.0" />
+    <PackageReference Include="Okta.Sdk" Version="9.0.2" />
   </ItemGroup>
 
 </Project>
